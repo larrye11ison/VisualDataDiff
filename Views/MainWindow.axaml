@@ -22,10 +22,15 @@
             <Setter Property="BorderBrush" Value="#FF3E9BFF"/>
             <Setter Property="BorderThickness" Value="2"/>
         </Style>
+        <Style Selector="Border.nameMismatch">
+            <Setter Property="Background" Value="#4DB33A2E"/>
+            <Setter Property="BorderBrush" Value="#FFD9603C"/>
+            <Setter Property="BorderThickness" Value="1"/>
+        </Style>
     </Window.Styles>
 
     <Panel>
-    <Grid RowDefinitions="Auto,Auto,Auto,*" Margin="8" RowSpacing="8">
+    <Grid RowDefinitions="Auto,Auto,*" Margin="8" RowSpacing="8">
         <Grid Grid.Row="0" ColumnDefinitions="Auto,*" ColumnSpacing="8">
             <GroupBox Grid.Column="0" Header="Visibility">
                 <Grid Margin="8" ColumnDefinitions="*,Auto,*" ColumnSpacing="12">
@@ -52,6 +57,8 @@
                 </Grid>
             </GroupBox>
 
+            <!-- Disabled: per-column editing on the main screen has been replaced by the
+                 Column Setup popover. Kept for potential reuse later.
             <GroupBox Grid.Column="1" Header="{Binding ColumnOptionsHeader}">
                 <Border Margin="8" IsVisible="{Binding HasSelectedColumnOption}">
                     <Grid ColumnDefinitions="*,*" RowDefinitions="Auto,Auto" ColumnSpacing="20" RowSpacing="8">
@@ -70,18 +77,20 @@
                     </Grid>
                 </Border>
             </GroupBox>
+            -->
+            <GroupBox Grid.Column="1" Header="Actions">
+                <Grid Margin="8" RowDefinitions="Auto,Auto" RowSpacing="6">
+                    <StackPanel Grid.Row="0" Orientation="Horizontal" Spacing="8">
+                        <Button Content="Reload" Command="{Binding ReloadCommand}"/>
+                        <Button Content="Column Setup..." Command="{Binding OpenColumnSettingsCommand}"/>
+                        <Button Content="Cancel" Command="{Binding CancelCommand}"/>
+                    </StackPanel>
+                    <TextBlock Grid.Row="1" Text="{Binding StatusText}" TextWrapping="Wrap"/>
+                </Grid>
+            </GroupBox>
         </Grid>
 
-        <Grid Grid.Row="1" RowDefinitions="Auto,Auto" RowSpacing="4">
-            <StackPanel Grid.Row="0" Orientation="Horizontal" Spacing="8">
-                <Button Content="Load + Compare" Command="{Binding LoadAndCompareCommand}"/>
-                <Button Content="Recompare with current column options" Command="{Binding RecompareCommand}"/>
-                <Button Content="Cancel" Command="{Binding CancelCommand}"/>
-            </StackPanel>
-            <TextBlock Grid.Row="1" Text="{Binding StatusText}" TextWrapping="Wrap"/>
-        </Grid>
-
-        <Grid Grid.Row="2" ColumnDefinitions="*,*" ColumnSpacing="8">
+        <Grid Grid.Row="1" ColumnDefinitions="*,*" ColumnSpacing="8">
             <GroupBox Grid.Column="0" Header="Left Source">
                 <Grid Margin="8" ColumnDefinitions="Auto,180,*,Auto" ColumnSpacing="8">
                     <TextBlock Grid.Column="0" VerticalAlignment="Center" Text="Source Type"/>
@@ -109,7 +118,7 @@
             </GroupBox>
         </Grid>
 
-        <Grid Grid.Row="3" ColumnDefinitions="*,*" ColumnSpacing="8" IsVisible="{Binding !IsPivotOpen}">
+        <Grid Grid.Row="2" ColumnDefinitions="*,*" ColumnSpacing="8" IsVisible="{Binding !IsAnyOverlayOpen}">
             <GroupBox x:Name="LeftSourceGroupBox" Grid.Column="0" Header="{Binding LeftSource.DataGroupHeader}">
                 <Grid Margin="4" RowDefinitions="*,Auto" RowSpacing="6">
                     <tg:TreeDataGrid Grid.Row="0"
@@ -183,6 +192,75 @@
                         </ItemsControl.ItemTemplate>
                     </ItemsControl>
                 </ScrollViewer>
+            </Grid>
+        </Border>
+    </Border>
+
+    <Border IsVisible="{Binding IsColumnSettingsOpen}"
+            Background="#CC101010">
+        <Border Background="#FF2D2D30"
+                BorderBrush="Gray"
+                BorderThickness="1"
+                CornerRadius="6"
+                Margin="24"
+                Padding="16">
+            <Grid RowDefinitions="Auto,Auto,Auto,*,Auto" RowSpacing="8">
+                <StackPanel Grid.Row="0" Orientation="Horizontal" Spacing="12">
+                    <TextBlock Text="Column Setup" FontWeight="Bold" FontSize="16"/>
+                    <TextBlock Text="Review column types and confirm the left/right headers line up."
+                               Opacity="0.7" VerticalAlignment="Center"/>
+                </StackPanel>
+
+                <TextBlock Grid.Row="1"
+                           Text="Select at least one Key column before running the comparison."
+                           Foreground="#FFE0A15B"
+                           FontWeight="SemiBold"
+                           IsVisible="{Binding !HasKeyColumnSelected}"/>
+
+                <Grid Grid.Row="2" ColumnDefinitions="40,130,120,190,*,*" ColumnSpacing="12" Margin="0,0,16,2">
+                    <TextBlock Grid.Column="0" Text="#" FontWeight="Bold"/>
+                    <TextBlock Grid.Column="1" Text="Type" FontWeight="Bold"/>
+                    <TextBlock Grid.Column="2" Text="Case-sensitive" FontWeight="Bold"/>
+                    <TextBlock Grid.Column="3" Text="Trim leading/trailing whitespace" FontWeight="Bold" TextWrapping="Wrap"/>
+                    <TextBlock Grid.Column="4" Text="{Binding LeftSource.DataGroupHeader}" FontWeight="Bold"/>
+                    <TextBlock Grid.Column="5" Text="{Binding RightSource.DataGroupHeader}" FontWeight="Bold"/>
+                </Grid>
+
+                <ScrollViewer Grid.Row="3">
+                    <ItemsControl ItemsSource="{Binding ColumnOptions}">
+                        <ItemsControl.ItemTemplate>
+                            <DataTemplate x:DataType="vm:ColumnOptionsViewModel">
+                                <Grid ColumnDefinitions="40,130,120,190,*,*" ColumnSpacing="12" Margin="0,0,0,4">
+                                    <TextBlock Grid.Column="0" Text="{Binding Ordinal}" VerticalAlignment="Center" Opacity="0.6"/>
+                                    <ComboBox Grid.Column="1" ItemsSource="{Binding AvailableRoles}" SelectedItem="{Binding Role}"/>
+                                    <CheckBox Grid.Column="2" IsChecked="{Binding CaseSensitive}" HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                                    <CheckBox Grid.Column="3" IsChecked="{Binding IgnoreLeadingAndTrailingWhitespace}" HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                                    <Border Grid.Column="4" Padding="4,2" CornerRadius="3" Classes.nameMismatch="{Binding HasNameMismatch}">
+                                        <TextBlock Text="{Binding LeftDisplayName}" TextTrimming="CharacterEllipsis"/>
+                                    </Border>
+                                    <Border Grid.Column="5" Padding="4,2" CornerRadius="3" Classes.nameMismatch="{Binding HasNameMismatch}">
+                                        <TextBlock Text="{Binding RightDisplayName}" TextTrimming="CharacterEllipsis"/>
+                                    </Border>
+                                </Grid>
+                            </DataTemplate>
+                        </ItemsControl.ItemTemplate>
+                    </ItemsControl>
+                </ScrollViewer>
+
+                <Grid Grid.Row="4" ColumnDefinitions="*,Auto" Margin="0,4,0,0">
+                    <TextBlock Grid.Column="0"
+                               Text="Header names highlighted above differ between the left and right file (ignoring case and whitespace)."
+                               Opacity="0.6" TextWrapping="Wrap" VerticalAlignment="Center"/>
+                    <StackPanel Grid.Column="1" Orientation="Horizontal" Spacing="8" IsVisible="{Binding !IsConfirmingDiscardColumnSettings}">
+                        <Button Content="OK" Command="{Binding ColumnSettingsOkCommand}"/>
+                        <Button Content="Cancel (Esc)" Command="{Binding ColumnSettingsCancelCommand}"/>
+                    </StackPanel>
+                    <StackPanel Grid.Column="1" Orientation="Horizontal" Spacing="8" IsVisible="{Binding IsConfirmingDiscardColumnSettings}">
+                        <TextBlock Text="Discard changes?" VerticalAlignment="Center" Foreground="#FFE0A15B" Margin="0,0,4,0"/>
+                        <Button Content="Discard" Command="{Binding DiscardColumnSettingsChangesCommand}"/>
+                        <Button Content="Keep Editing" Command="{Binding KeepEditingColumnSettingsCommand}"/>
+                    </StackPanel>
+                </Grid>
             </Grid>
         </Border>
     </Border>

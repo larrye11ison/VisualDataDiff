@@ -18,6 +18,7 @@ public partial class MainWindowViewModel : ViewModelBase
     private TabularDataSet? _rightDataSet;
     private DiffResult? _diffResult;
     private DiffGridRowViewModel? _pivotedSourceRow;
+    private ColumnSettingsSnapshotEntry[]? _columnSettingsSnapshot;
 
     public MainWindowViewModel(
         ITabularDataSourceFactory sourceFactory,
@@ -50,12 +51,16 @@ public partial class MainWindowViewModel : ViewModelBase
 
         SetupLeftSourceCommand = new AsyncRelayCommand(() => SetupSourceAsync(LeftSource), () => !IsBusy);
         SetupRightSourceCommand = new AsyncRelayCommand(() => SetupSourceAsync(RightSource), () => !IsBusy);
-        LoadAndCompareCommand = new AsyncRelayCommand(LoadAndCompareAsync, () => !IsBusy);
-        RecompareCommand = new AsyncRelayCommand(RecompareAsync, () => !IsBusy && _leftDataSet is not null && _rightDataSet is not null);
+        ReloadCommand = new AsyncRelayCommand(ReloadAsync, () => !IsBusy);
         CancelCommand = new RelayCommand(CancelCurrentOperation, () => IsBusy);
         ClosePivotViewCommand = new RelayCommand(ClosePivotView);
         PivotPreviousRowCommand = new RelayCommand(() => NavigatePivotRow(-1), () => CanNavigatePivotRow(-1));
         PivotNextRowCommand = new RelayCommand(() => NavigatePivotRow(1), () => CanNavigatePivotRow(1));
+        OpenColumnSettingsCommand = new RelayCommand(OpenColumnSettings);
+        ColumnSettingsOkCommand = new AsyncRelayCommand(ColumnSettingsOkAsync, () => !IsBusy);
+        ColumnSettingsCancelCommand = new RelayCommand(CancelColumnSettings);
+        DiscardColumnSettingsChangesCommand = new RelayCommand(DiscardColumnSettingsChanges);
+        KeepEditingColumnSettingsCommand = new RelayCommand(KeepEditingColumnSettings);
 
         StatusText = "Select a source for each side and run comparison.";
     }
@@ -92,9 +97,7 @@ public partial class MainWindowViewModel : ViewModelBase
 
     public IAsyncRelayCommand SetupRightSourceCommand { get; }
 
-    public IAsyncRelayCommand LoadAndCompareCommand { get; }
-
-    public IAsyncRelayCommand RecompareCommand { get; }
+    public IAsyncRelayCommand ReloadCommand { get; }
 
     public IRelayCommand CancelCommand { get; }
 
@@ -103,6 +106,16 @@ public partial class MainWindowViewModel : ViewModelBase
     public IRelayCommand PivotPreviousRowCommand { get; }
 
     public IRelayCommand PivotNextRowCommand { get; }
+
+    public IRelayCommand OpenColumnSettingsCommand { get; }
+
+    public IAsyncRelayCommand ColumnSettingsOkCommand { get; }
+
+    public IRelayCommand ColumnSettingsCancelCommand { get; }
+
+    public IRelayCommand DiscardColumnSettingsChangesCommand { get; }
+
+    public IRelayCommand KeepEditingColumnSettingsCommand { get; }
 
     [ObservableProperty]
     private bool _hideIdenticalColumns;
@@ -131,6 +144,16 @@ public partial class MainWindowViewModel : ViewModelBase
     [ObservableProperty]
     private bool _pivotSkipOrphanRows;
 
+    [ObservableProperty]
+    private bool _isColumnSettingsOpen;
+
+    [ObservableProperty]
+    private bool _isConfirmingDiscardColumnSettings;
+
+    public bool IsAnyOverlayOpen => IsPivotOpen || IsColumnSettingsOpen;
+
+    public bool HasKeyColumnSelected => ColumnOptions.Any(x => x.Role == ColumnRole.Key);
+
     public string PivotSubtitle => _pivotedSourceRow switch
     {
         null => string.Empty,
@@ -139,6 +162,9 @@ public partial class MainWindowViewModel : ViewModelBase
         _ => "Matched row"
     };
 
+    // Disabled along with the main-screen "Column Options" editor: column selection is now
+    // only surfaced through the Column Setup popover. Kept for potential reuse later.
+#if false
     private int? _currentVisibleColumnIndex;
 
     public int? CurrentVisibleColumnIndex
@@ -165,6 +191,7 @@ public partial class MainWindowViewModel : ViewModelBase
     public string ColumnOptionsHeader => SelectedColumnOption is null
         ? "Column Options"
         : $"Column Options - {SelectedColumnOption.Name}";
+#endif
 
     public string LeftGridSummary => $"{LeftSource.DataGroupHeader} | {(_leftDataSet?.Rows.Count ?? 0):N0} rows, {DisplayRows.Count(x => !x.IsRightOrphan):N0} visible.";
 
@@ -274,13 +301,23 @@ public partial class MainWindowViewModel : ViewModelBase
         NotifyPivotNavigationCanExecuteChanged();
     }
 
+    partial void OnIsPivotOpenChanged(bool value)
+    {
+        OnPropertyChanged(nameof(IsAnyOverlayOpen));
+    }
+
+    partial void OnIsColumnSettingsOpenChanged(bool value)
+    {
+        OnPropertyChanged(nameof(IsAnyOverlayOpen));
+    }
+
     partial void OnIsBusyChanged(bool value)
     {
         SetupLeftSourceCommand.NotifyCanExecuteChanged();
         SetupRightSourceCommand.NotifyCanExecuteChanged();
-        LoadAndCompareCommand.NotifyCanExecuteChanged();
-        RecompareCommand.NotifyCanExecuteChanged();
+        ReloadCommand.NotifyCanExecuteChanged();
         CancelCommand.NotifyCanExecuteChanged();
+        ColumnSettingsOkCommand.NotifyCanExecuteChanged();
     }
 
     private void OnSourcePropertyChanged(object? sender, PropertyChangedEventArgs e)
@@ -304,7 +341,7 @@ public partial class MainWindowViewModel : ViewModelBase
         StatusText = $"{source.Title} source configured.";
     }
 
-    private async Task LoadAndCompareAsync()
+    private async Task ReloadAsync()
     {
         if (string.IsNullOrWhiteSpace(LeftSource.Location) || string.IsNullOrWhiteSpace(RightSource.Location))
         {
@@ -343,10 +380,21 @@ public partial class MainWindowViewModel : ViewModelBase
 
             await Task.WhenAll(leftLoadTask, rightLoadTask);
 
+            var previousLeftColumns = _leftDataSet?.Columns;
+            var previousRightColumns = _rightDataSet?.Columns;
+
             _leftDataSet = leftLoadTask.Result;
             _rightDataSet = rightLoadTask.Result;
 
+            var headersChanged = !HeaderNamesUnchanged(previousLeftColumns, previousRightColumns, _leftDataSet.Columns, _rightDataSet.Columns);
+
             RebuildColumnOptions(_leftDataSet, _rightDataSet);
+
+            if (headersChanged)
+            {
+                OpenColumnSettings();
+            }
+
             await CompareUsingCurrentOptionsAsync(cts.Token);
         }
         catch (OperationCanceledException)
@@ -364,14 +412,8 @@ public partial class MainWindowViewModel : ViewModelBase
         }
     }
 
-    private async Task RecompareAsync()
+    private async Task RunComparisonAsync()
     {
-        if (_leftDataSet is null || _rightDataSet is null)
-        {
-            StatusText = "Load both sources before running comparison.";
-            return;
-        }
-
         using var cts = StartOperation();
 
         try
@@ -401,6 +443,13 @@ public partial class MainWindowViewModel : ViewModelBase
             return;
         }
 
+        if (!HasKeyColumnSelected)
+        {
+            StatusText = "Select at least one Key column before running the comparison.";
+            OpenColumnSettings();
+            return;
+        }
+
         ClosePivotView();
 
         StatusText = "Comparing data...";
@@ -423,6 +472,34 @@ public partial class MainWindowViewModel : ViewModelBase
             .ToArray();
     }
 
+    private static bool HeaderNamesUnchanged(
+        IReadOnlyList<TabularColumn>? previousLeft,
+        IReadOnlyList<TabularColumn>? previousRight,
+        IReadOnlyList<TabularColumn> currentLeft,
+        IReadOnlyList<TabularColumn> currentRight)
+    {
+        if (previousLeft is null || previousRight is null)
+        {
+            return false;
+        }
+
+        var previousLeftNames = NormalizeNames(previousLeft);
+        var previousRightNames = NormalizeNames(previousRight);
+        var currentLeftNames = NormalizeNames(currentLeft);
+        var currentRightNames = NormalizeNames(currentRight);
+
+        var sameSides = previousLeftNames.SequenceEqual(currentLeftNames, StringComparer.OrdinalIgnoreCase)
+            && previousRightNames.SequenceEqual(currentRightNames, StringComparer.OrdinalIgnoreCase);
+
+        var swappedSides = previousLeftNames.SequenceEqual(currentRightNames, StringComparer.OrdinalIgnoreCase)
+            && previousRightNames.SequenceEqual(currentLeftNames, StringComparer.OrdinalIgnoreCase);
+
+        return sameSides || swappedSides;
+    }
+
+    private static IReadOnlyList<string> NormalizeNames(IReadOnlyList<TabularColumn> columns) =>
+        columns.Select(c => HeaderNameComparer.Normalize(c.Name)).ToArray();
+
     private void RebuildColumnOptions(TabularDataSet leftDataSet, TabularDataSet rightDataSet)
     {
         var existing = ColumnOptions.ToDictionary(x => x.Ordinal);
@@ -436,13 +513,10 @@ public partial class MainWindowViewModel : ViewModelBase
         var maxColumns = Math.Max(leftDataSet.Columns.Count, rightDataSet.Columns.Count);
         for (var i = 0; i < maxColumns; i++)
         {
-            var name = i < leftDataSet.Columns.Count
-                ? leftDataSet.Columns[i].Name
-                : i < rightDataSet.Columns.Count
-                    ? rightDataSet.Columns[i].Name
-                    : ExcelColumnNameHelper.ToColumnName(i);
+            var leftName = i < leftDataSet.Columns.Count ? leftDataSet.Columns[i].Name : null;
+            var rightName = i < rightDataSet.Columns.Count ? rightDataSet.Columns[i].Name : null;
 
-            var vm = new ColumnOptionsViewModel(i, name);
+            var vm = new ColumnOptionsViewModel(i, leftName, rightName);
             if (existing.TryGetValue(i, out var previous))
             {
                 vm.Role = previous.Role;
@@ -457,6 +531,8 @@ public partial class MainWindowViewModel : ViewModelBase
             vm.PropertyChanged += OnColumnOptionsPropertyChanged;
             ColumnOptions.Add(vm);
         }
+
+        OnPropertyChanged(nameof(HasKeyColumnSelected));
     }
 
     private void OnColumnOptionsPropertyChanged(object? sender, PropertyChangedEventArgs e)
@@ -466,12 +542,18 @@ public partial class MainWindowViewModel : ViewModelBase
             ApplyVisibilityFilters();
         }
 
+        if (e.PropertyName is nameof(ColumnOptionsViewModel.Role))
+        {
+            OnPropertyChanged(nameof(HasKeyColumnSelected));
+        }
+
         if (e.PropertyName is nameof(ColumnOptionsViewModel.CaseSensitive) or nameof(ColumnOptionsViewModel.IgnoreLeadingAndTrailingWhitespace) or nameof(ColumnOptionsViewModel.Role))
         {
             StatusText = "Column options changed. Run comparison to refresh results.";
-            OnPropertyChanged(nameof(SelectedColumnOption));
-            OnPropertyChanged(nameof(HasSelectedColumnOption));
-            OnPropertyChanged(nameof(ColumnOptionsHeader));
+            // Disabled along with the main-screen "Column Options" editor.
+            // OnPropertyChanged(nameof(SelectedColumnOption));
+            // OnPropertyChanged(nameof(HasSelectedColumnOption));
+            // OnPropertyChanged(nameof(ColumnOptionsHeader));
         }
     }
 
@@ -542,7 +624,7 @@ public partial class MainWindowViewModel : ViewModelBase
         DisplayColumns.ReplaceAll(filteredColumns);
         DisplayRows.ReplaceAll(filteredRows);
 
-        NormalizeSelectedVisibleColumnIndex();
+        // NormalizeSelectedVisibleColumnIndex(); // disabled along with the main-screen "Column Options" editor
         OnPropertyChanged(nameof(LeftGridSummary));
         OnPropertyChanged(nameof(RightGridSummary));
     }
@@ -603,6 +685,115 @@ public partial class MainWindowViewModel : ViewModelBase
         RebuildPivotedColumns();
         NotifyPivotNavigationCanExecuteChanged();
     }
+
+    private void OpenColumnSettings()
+    {
+        if (IsPivotOpen)
+        {
+            ClosePivotView();
+        }
+
+        _columnSettingsSnapshot = ColumnOptions
+            .Select(x => new ColumnSettingsSnapshotEntry(x.Ordinal, x.Role, x.CaseSensitive, x.IgnoreLeadingAndTrailingWhitespace))
+            .ToArray();
+        IsConfirmingDiscardColumnSettings = false;
+        IsColumnSettingsOpen = true;
+    }
+
+    private async Task ColumnSettingsOkAsync()
+    {
+        var hasChanges = HasPendingColumnSettingsChanges();
+        CloseColumnSettingsWithoutSaving();
+
+        if (hasChanges)
+        {
+            await RunComparisonAsync();
+        }
+    }
+
+    private void CancelColumnSettings()
+    {
+        if (IsConfirmingDiscardColumnSettings)
+        {
+            return;
+        }
+
+        if (HasPendingColumnSettingsChanges())
+        {
+            IsConfirmingDiscardColumnSettings = true;
+            return;
+        }
+
+        CloseColumnSettingsWithoutSaving();
+    }
+
+    private void DiscardColumnSettingsChanges()
+    {
+        RevertColumnSettingsToSnapshot();
+        CloseColumnSettingsWithoutSaving();
+    }
+
+    private void KeepEditingColumnSettings()
+    {
+        IsConfirmingDiscardColumnSettings = false;
+    }
+
+    private void CloseColumnSettingsWithoutSaving()
+    {
+        _columnSettingsSnapshot = null;
+        IsConfirmingDiscardColumnSettings = false;
+        IsColumnSettingsOpen = false;
+    }
+
+    private bool HasPendingColumnSettingsChanges()
+    {
+        if (_columnSettingsSnapshot is null)
+        {
+            return false;
+        }
+
+        if (_columnSettingsSnapshot.Length != ColumnOptions.Count)
+        {
+            return true;
+        }
+
+        foreach (var entry in _columnSettingsSnapshot)
+        {
+            var current = ColumnOptions.FirstOrDefault(x => x.Ordinal == entry.Ordinal);
+            if (current is null
+                || current.Role != entry.Role
+                || current.CaseSensitive != entry.CaseSensitive
+                || current.IgnoreLeadingAndTrailingWhitespace != entry.IgnoreLeadingAndTrailingWhitespace)
+            {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    private void RevertColumnSettingsToSnapshot()
+    {
+        if (_columnSettingsSnapshot is null)
+        {
+            return;
+        }
+
+        foreach (var entry in _columnSettingsSnapshot)
+        {
+            var current = ColumnOptions.FirstOrDefault(x => x.Ordinal == entry.Ordinal);
+            if (current is null)
+            {
+                continue;
+            }
+
+            current.Role = entry.Role;
+            current.CaseSensitive = entry.CaseSensitive;
+            current.IgnoreLeadingAndTrailingWhitespace = entry.IgnoreLeadingAndTrailingWhitespace;
+        }
+    }
+
+    private readonly record struct ColumnSettingsSnapshotEntry(int Ordinal, ColumnRole Role, bool CaseSensitive, bool IgnoreLeadingAndTrailingWhitespace);
 
     private void ClosePivotView()
     {
@@ -707,6 +898,8 @@ public partial class MainWindowViewModel : ViewModelBase
         }
     }
 
+    // Disabled along with the main-screen "Column Options" editor. Kept for potential reuse later.
+#if false
     public void SelectVisibleColumn(int visibleIndex)
     {
         if (visibleIndex < 0 || visibleIndex >= DisplayColumns.Count)
@@ -730,6 +923,7 @@ public partial class MainWindowViewModel : ViewModelBase
             CurrentVisibleColumnIndex = 0;
         }
     }
+#endif
 
     private CancellationTokenSource StartOperation()
     {
