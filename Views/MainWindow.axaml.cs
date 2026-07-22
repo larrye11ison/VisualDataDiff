@@ -9,9 +9,11 @@ using Avalonia.Controls.Templates;
 using Avalonia.Input;
 using Avalonia.Interactivity;
 using Avalonia.Media;
+using Avalonia.Platform.Storage;
 using Avalonia.Threading;
 using Avalonia.VisualTree;
 using Avalonia.Visuals;
+using VisualDataDiff.Models;
 using VisualDataDiff.ViewModels;
 
 namespace VisualDataDiff.Views;
@@ -69,6 +71,8 @@ public partial class MainWindow : Window
 		LeftTreeDataGrid.AddHandler(KeyDownEvent, OnTreeGridNavigationKeyDown, RoutingStrategies.Tunnel);
 		RightTreeDataGrid.AddHandler(KeyDownEvent, OnTreeGridNavigationKeyDown, RoutingStrategies.Tunnel);
 		AddHandler(KeyDownEvent, OnWindowKeyDown, handledEventsToo: true);
+		AddHandler(DragDrop.DragOverEvent, OnWindowDragOver);
+		AddHandler(DragDrop.DropEvent, OnWindowDrop);
 	}
 
 	private void OnDataContextChanged(object? sender, EventArgs e)
@@ -538,6 +542,109 @@ public partial class MainWindow : Window
 				e.Handled = true;
 				break;
 		}
+	}
+
+	private void OnWindowDragOver(object? sender, DragEventArgs e)
+	{
+		e.DragEffects = e.DataTransfer.Contains(DataFormat.File) ? DragDropEffects.Copy : DragDropEffects.None;
+	}
+
+	private void OnWindowDrop(object? sender, DragEventArgs e)
+	{
+		if (_viewModel is null)
+		{
+			return;
+		}
+
+		var files = e.DataTransfer.TryGetFiles();
+		if (files is null || files.Length == 0)
+		{
+			return;
+		}
+
+		var excelPaths = files
+			.Select(f => f.TryGetLocalPath())
+			.Where(path => !string.IsNullOrWhiteSpace(path) && IsExcelFile(path))
+			.Select(path => path!)
+			.ToArray();
+
+		if (excelPaths.Length == 0)
+		{
+			_viewModel.StatusText = "Drop only Excel files (.xlsx or .xls).";
+			return;
+		}
+
+		if (excelPaths.Length > 2)
+		{
+			_viewModel.StatusText = "Only two files can be diffed — drop exactly one or two Excel files.";
+			return;
+		}
+
+		if (excelPaths.Length == 2)
+		{
+			AssignSource(_viewModel.LeftSource, excelPaths[0]);
+			AssignSource(_viewModel.RightSource, excelPaths[1]);
+			_viewModel.StatusText = "Two files dropped — assigned to Left and Right sources.";
+			return;
+		}
+
+		switch (DetermineDropZone(e))
+		{
+			case DropZone.Left:
+				AssignSource(_viewModel.LeftSource, excelPaths[0]);
+				break;
+
+			case DropZone.Right:
+				AssignSource(_viewModel.RightSource, excelPaths[0]);
+				break;
+
+			default:
+				_viewModel.StatusText = "Drop a single file onto the Left or Right grid, or drop two files anywhere to fill both.";
+				break;
+		}
+	}
+
+	private static void AssignSource(SourcePaneViewModel source, string path)
+	{
+		source.SelectedSourceType = SourceType.Excel;
+		source.Location = path;
+	}
+
+	private static bool IsExcelFile(string path)
+	{
+		var extension = Path.GetExtension(path);
+		return extension.Equals(".xlsx", StringComparison.OrdinalIgnoreCase)
+			|| extension.Equals(".xls", StringComparison.OrdinalIgnoreCase);
+	}
+
+	private DropZone DetermineDropZone(DragEventArgs e)
+	{
+		var visual = this.InputHitTest(e.GetPosition(this)) as Visual;
+		if (visual is null)
+		{
+			return DropZone.None;
+		}
+
+		var ancestors = visual.GetSelfAndVisualAncestors().ToArray();
+
+		if (ancestors.Contains(LeftSourceGroupBox))
+		{
+			return DropZone.Left;
+		}
+
+		if (ancestors.Contains(RightSourceGroupBox))
+		{
+			return DropZone.Right;
+		}
+
+		return DropZone.None;
+	}
+
+	private enum DropZone
+	{
+		None,
+		Left,
+		Right
 	}
 
 	private void TryOpenPivotForRow(TreeDataGrid grid, TreeDataGridCell cell)

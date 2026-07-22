@@ -1,0 +1,57 @@
+name: Release
+
+on:
+  push:
+    branches: [main]
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: windows-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Setup .NET
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: "10.0.x"
+
+      - name: Determine version
+        id: version
+        shell: bash
+        run: |
+          VERSION=$(dotnet msbuild VisualDataDiff.csproj -getProperty:Version)
+          echo "Computed version: $VERSION"
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+
+      - name: Publish
+        shell: bash
+        run: >
+          dotnet publish VisualDataDiff.csproj
+          --configuration Release
+          --runtime win-x64
+          --self-contained false
+          --output publish
+
+      - name: Zip artifact
+        shell: bash
+        run: |
+          cd publish
+          7z a "../VisualDataDiff-${{ steps.version.outputs.version }}-win-x64.zip" .
+          cd ..
+
+      - name: Create release
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "v${{ steps.version.outputs.version }}" \
+            "VisualDataDiff-${{ steps.version.outputs.version }}-win-x64.zip" \
+            --title "v${{ steps.version.outputs.version }}" \
+            --generate-notes \
+            --prerelease
