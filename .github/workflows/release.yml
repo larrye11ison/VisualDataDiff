@@ -26,7 +26,8 @@ jobs:
         id: version
         shell: bash
         run: |
-          VERSION=$(dotnet msbuild VisualDataDiff.csproj -getProperty:Version)
+          dotnet tool install --global minver-cli
+          VERSION=$(minver --tag-prefix v)
           echo "Computed version: $VERSION"
           echo "version=$VERSION" >> "$GITHUB_OUTPUT"
 
