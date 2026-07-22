@@ -215,7 +215,8 @@ public partial class MainWindow : Window
 
 		_activeRowIndex = rowIndex;
 		_activeColumnIndex = columnIndex;
-		_viewModel?.SelectVisibleColumn(columnIndex);
+		// Disabled along with the main-screen "Column Options" editor. Kept for potential reuse later.
+		// _viewModel?.SelectVisibleColumn(columnIndex);
 	}
 
 	private void SetActiveCell(int rowIndex, int columnIndex)
@@ -415,11 +416,12 @@ public partial class MainWindow : Window
 			return;
 		}
 
-		var header = visual.GetSelfAndVisualAncestors().OfType<TreeDataGridColumnHeader>().FirstOrDefault();
-		if (header is not null)
-		{
-			_viewModel.SelectVisibleColumn(header.ColumnIndex);
-		}
+		// Disabled along with the main-screen "Column Options" editor. Kept for potential reuse later.
+		// var header = visual.GetSelfAndVisualAncestors().OfType<TreeDataGridColumnHeader>().FirstOrDefault();
+		// if (header is not null)
+		// {
+		// 	_viewModel.SelectVisibleColumn(header.ColumnIndex);
+		// }
 	}
 
 	private void OnTreeGridKeyDown(object? sender, KeyEventArgs e)
@@ -442,7 +444,7 @@ public partial class MainWindow : Window
 
 	private void OnTreeGridNavigationKeyDown(object? sender, KeyEventArgs e)
 	{
-		if (_viewModel is null || _viewModel.IsPivotOpen)
+		if (_viewModel is null || _viewModel.IsAnyOverlayOpen)
 		{
 			return;
 		}
@@ -520,7 +522,23 @@ public partial class MainWindow : Window
 
 	private void OnWindowKeyDown(object? sender, KeyEventArgs e)
 	{
-		if (_viewModel is null || !_viewModel.IsPivotOpen)
+		if (_viewModel is null)
+		{
+			return;
+		}
+
+		if (_viewModel.IsColumnSettingsOpen)
+		{
+			if (e.Key == Key.Escape && _viewModel.ColumnSettingsCancelCommand.CanExecute(null))
+			{
+				_viewModel.ColumnSettingsCancelCommand.Execute(null);
+				e.Handled = true;
+			}
+
+			return;
+		}
+
+		if (!_viewModel.IsPivotOpen)
 		{
 			return;
 		}
@@ -562,21 +580,9 @@ public partial class MainWindow : Window
 			return;
 		}
 
-		var excelPaths = files
-			.Select(f => f.TryGetLocalPath())
-			.Where(path => !string.IsNullOrWhiteSpace(path) && IsExcelFile(path))
-			.Select(path => path!)
-			.ToArray();
-
-		if (excelPaths.Length == 0)
+		if (!TryGetValidExcelPaths(files, out var excelPaths))
 		{
-			_viewModel.StatusText = "Drop only Excel files (.xlsx or .xls).";
-			return;
-		}
-
-		if (excelPaths.Length > 2)
-		{
-			_viewModel.StatusText = "Only two files can be diffed — drop exactly one or two Excel files.";
+			_viewModel.StatusText = "Drop 1 or 2 Excel files (.xlsx or .xls) — every dropped file must be a valid Excel file.";
 			return;
 		}
 
@@ -585,6 +591,7 @@ public partial class MainWindow : Window
 			AssignSource(_viewModel.LeftSource, excelPaths[0]);
 			AssignSource(_viewModel.RightSource, excelPaths[1]);
 			_viewModel.StatusText = "Two files dropped — assigned to Left and Right sources.";
+			TryTriggerLoad();
 			return;
 		}
 
@@ -592,16 +599,51 @@ public partial class MainWindow : Window
 		{
 			case DropZone.Left:
 				AssignSource(_viewModel.LeftSource, excelPaths[0]);
+				TryTriggerLoad();
 				break;
 
 			case DropZone.Right:
 				AssignSource(_viewModel.RightSource, excelPaths[0]);
+				TryTriggerLoad();
 				break;
 
 			default:
 				_viewModel.StatusText = "Drop a single file onto the Left or Right grid, or drop two files anywhere to fill both.";
 				break;
 		}
+	}
+
+	private void TryTriggerLoad()
+	{
+		if (_viewModel is not null && _viewModel.ReloadCommand.CanExecute(null))
+		{
+			_viewModel.ReloadCommand.Execute(null);
+		}
+	}
+
+	private static bool TryGetValidExcelPaths(IReadOnlyList<IStorageItem> files, out string[] excelPaths)
+	{
+		excelPaths = [];
+
+		if (files.Count is < 1 or > 2)
+		{
+			return false;
+		}
+
+		var paths = new string[files.Count];
+		for (var i = 0; i < files.Count; i++)
+		{
+			var path = files[i].TryGetLocalPath();
+			if (string.IsNullOrWhiteSpace(path) || !IsExcelFile(path))
+			{
+				return false;
+			}
+
+			paths[i] = path;
+		}
+
+		excelPaths = paths;
+		return true;
 	}
 
 	private static void AssignSource(SourcePaneViewModel source, string path)
