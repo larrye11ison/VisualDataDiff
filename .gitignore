@@ -1,0 +1,18 @@
+# Build output
+[Bb]in/
+[Oo]bj/
+
+# Visual Studio
+.vs/
+*.user
+*.suo
+
+# Editor / tool local state
+.cr/
+
+# Rider
+.idea/
+
+# OS
+.DS_Store
+Thumbs.db
