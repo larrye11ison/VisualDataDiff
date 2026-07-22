@@ -33,19 +33,6 @@ public partial class MainWindowViewModel : ViewModelBase
         LeftSource.PropertyChanged += OnSourcePropertyChanged;
         RightSource.PropertyChanged += OnSourcePropertyChanged;
 
-        const string tempLeftPath = @"C:\Users\pj\Downloads\Prop Inspection - Larry.xlsx";
-        const string tempRightPath = @"C:\Users\pj\Downloads\Prop Inspection - Courtney.xls";
-
-        if (File.Exists(tempLeftPath))
-        {
-            LeftSource.Location = tempLeftPath;
-        }
-
-        if (File.Exists(tempRightPath))
-        {
-            RightSource.Location = tempRightPath;
-        }
-
         AvailableSourceTypes = Enum.GetValues<SourceType>();
         AvailableRowVisibilityOptions =
         [
