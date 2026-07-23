@@ -18,6 +18,7 @@ public static class DiffGridCellFactory
 			Value = cell.LeftValue ?? string.Empty,
 			IsDifferent = cell.IsDifferent,
 			IsOrphanPlaceholder = row.IsRightOrphan,
+			IsOrphanRowData = row.IsLeftOrphan,
 			IsActualDifference = cell.IsDifferent && !hasOrphan,
 			IsSearchMatch = isSearchMatch
 		};
@@ -31,6 +32,7 @@ public static class DiffGridCellFactory
 			Value = cell.RightValue ?? string.Empty,
 			IsDifferent = cell.IsDifferent,
 			IsOrphanPlaceholder = row.IsLeftOrphan,
+			IsOrphanRowData = row.IsRightOrphan,
 			IsActualDifference = cell.IsDifferent && !hasOrphan,
 			IsSearchMatch = isSearchMatch
 		};

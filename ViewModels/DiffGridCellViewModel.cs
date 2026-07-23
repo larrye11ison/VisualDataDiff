@@ -8,6 +8,8 @@ public sealed class DiffGridCellViewModel
 
 	public required bool IsOrphanPlaceholder { get; init; }
 
+	public required bool IsOrphanRowData { get; init; }
+
 	public required bool IsActualDifference { get; init; }
 
 	public bool IsSearchMatch { get; init; }
