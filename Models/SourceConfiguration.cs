@@ -9,4 +9,8 @@ public sealed class SourceConfiguration
 	public bool TreatFirstRowAsHeader { get; set; } = true;
 
 	public string? Location { get; set; }
+
+	public char Delimiter { get; set; } = ',';
+
+	public char? QuoteCharacter { get; set; } = '"';
 }

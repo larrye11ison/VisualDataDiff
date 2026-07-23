@@ -30,6 +30,10 @@
         <Style Selector="Border.searchAllRow">
             <Setter Property="Background" Value="#FF3A3A3D"/>
         </Style>
+        <Style Selector="ItemsControl.delimitedTextPreview TextBlock">
+            <Setter Property="FontFamily" Value="Consolas,Menlo,monospace"/>
+            <Setter Property="TextWrapping" Value="NoWrap"/>
+        </Style>
     </Window.Styles>
 
     <Panel>
@@ -96,28 +100,36 @@
 
         <Grid Grid.Row="1" ColumnDefinitions="*,*" ColumnSpacing="8">
             <GroupBox Grid.Column="0" Header="Left Source">
-                <Grid Margin="8" ColumnDefinitions="Auto,180,*,Auto" ColumnSpacing="8">
+                <Grid Margin="8" ColumnDefinitions="Auto,180,*,Auto,Auto" ColumnSpacing="8">
                     <TextBlock Grid.Column="0" VerticalAlignment="Center" Text="Source Type"/>
-                    <ComboBox Grid.Column="1" ItemsSource="{Binding AvailableSourceTypes}" SelectedItem="{Binding LeftSource.SelectedSourceType}"/>
+                    <ComboBox Grid.Column="1" ItemsSource="{Binding AvailableSourceTypes}" SelectedItem="{Binding LeftSource.SelectedSourceTypeOption}"/>
                     <CheckBox Grid.Column="2"
                               VerticalAlignment="Center"
                               IsVisible="{Binding LeftSource.SupportsHeaderOption}"
                               IsChecked="{Binding LeftSource.TreatFirstRowAsHeader}"
                               Content="Treat first row as header names"/>
                     <Button Grid.Column="3" Content="Setup Source" Command="{Binding SetupLeftSourceCommand}"/>
+                    <Button Grid.Column="4"
+                            Content="Configure..."
+                            IsVisible="{Binding LeftSource.SupportsDelimiterConfiguration}"
+                            Command="{Binding ConfigureLeftSourceCommand}"/>
                 </Grid>
             </GroupBox>
 
             <GroupBox Grid.Column="1" Header="Right Source">
-                <Grid Margin="8" ColumnDefinitions="Auto,180,*,Auto" ColumnSpacing="8">
+                <Grid Margin="8" ColumnDefinitions="Auto,180,*,Auto,Auto" ColumnSpacing="8">
                     <TextBlock Grid.Column="0" VerticalAlignment="Center" Text="Source Type"/>
-                    <ComboBox Grid.Column="1" ItemsSource="{Binding AvailableSourceTypes}" SelectedItem="{Binding RightSource.SelectedSourceType}"/>
+                    <ComboBox Grid.Column="1" ItemsSource="{Binding AvailableSourceTypes}" SelectedItem="{Binding RightSource.SelectedSourceTypeOption}"/>
                     <CheckBox Grid.Column="2"
                               VerticalAlignment="Center"
                               IsVisible="{Binding RightSource.SupportsHeaderOption}"
                               IsChecked="{Binding RightSource.TreatFirstRowAsHeader}"
                               Content="Treat first row as header names"/>
                     <Button Grid.Column="3" Content="Setup Source" Command="{Binding SetupRightSourceCommand}"/>
+                    <Button Grid.Column="4"
+                            Content="Configure..."
+                            IsVisible="{Binding RightSource.SupportsDelimiterConfiguration}"
+                            Command="{Binding ConfigureRightSourceCommand}"/>
                 </Grid>
             </GroupBox>
         </Grid>
@@ -311,6 +323,59 @@
                         <Button Content="Keep Editing" Command="{Binding KeepEditingColumnSettingsCommand}"/>
                     </StackPanel>
                 </Grid>
+            </Grid>
+        </Border>
+    </Border>
+
+    <Border IsVisible="{Binding IsDelimitedTextConfigOpen}"
+            Background="#CC101010">
+        <Border Background="#FF2D2D30"
+                BorderBrush="Gray"
+                BorderThickness="1"
+                CornerRadius="6"
+                Margin="24"
+                Padding="16"
+                MaxWidth="720"
+                HorizontalAlignment="Center"
+                VerticalAlignment="Center">
+            <Grid RowDefinitions="Auto,Auto,Auto,Auto,200,Auto" RowSpacing="10">
+                <TextBlock Grid.Row="0" Text="{Binding DelimitedTextConfigTitle}" FontWeight="Bold" FontSize="16"/>
+
+                <Grid Grid.Row="1" ColumnDefinitions="Auto,160,Auto,120" ColumnSpacing="8">
+                    <TextBlock Grid.Column="0" Text="Delimiter" VerticalAlignment="Center"/>
+                    <ComboBox Grid.Column="1" ItemsSource="{Binding AvailableDelimiterPresets}" SelectedItem="{Binding SelectedDelimiterPreset}"/>
+                    <TextBox Grid.Column="3"
+                             IsVisible="{Binding IsCustomDelimiterVisible}"
+                             Text="{Binding CustomDelimiterText}"
+                             MaxLength="1"
+                             PlaceholderText="char"/>
+                </Grid>
+
+                <Grid Grid.Row="2" ColumnDefinitions="Auto,160,Auto,120" ColumnSpacing="8">
+                    <TextBlock Grid.Column="0" Text="Quote / literal character" VerticalAlignment="Center"/>
+                    <ComboBox Grid.Column="1" ItemsSource="{Binding AvailableQuotePresets}" SelectedItem="{Binding SelectedQuotePreset}"/>
+                    <TextBox Grid.Column="3"
+                             IsVisible="{Binding IsCustomQuoteVisible}"
+                             Text="{Binding CustomQuoteText}"
+                             MaxLength="1"
+                             PlaceholderText="char"/>
+                </Grid>
+
+                <TextBlock Grid.Row="3"
+                           Text="{Binding DelimitedTextConfigErrorText}"
+                           Foreground="#FFE0A15B"
+                           IsVisible="{Binding HasDelimitedTextConfigError}"/>
+
+                <Border Grid.Row="4" Background="#FF1E1E1E" Padding="8" CornerRadius="4">
+                    <ScrollViewer>
+                        <ItemsControl ItemsSource="{Binding DelimitedTextPreviewLines}" Classes="delimitedTextPreview"/>
+                    </ScrollViewer>
+                </Border>
+
+                <StackPanel Grid.Row="5" Orientation="Horizontal" Spacing="8" HorizontalAlignment="Right">
+                    <Button Content="OK" Command="{Binding DelimitedTextConfigOkCommand}"/>
+                    <Button Content="Cancel (Esc)" Command="{Binding DelimitedTextConfigCancelCommand}"/>
+                </StackPanel>
             </Grid>
         </Border>
     </Border>
