@@ -1,5 +1,6 @@
 ﻿using System.Collections.ObjectModel;
 using System.ComponentModel;
+using Avalonia.Threading;
 using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
 using VisualDataDiff.Models;
@@ -13,21 +14,30 @@ public partial class MainWindowViewModel : ViewModelBase
     private readonly ITabularDataSourceFactory _sourceFactory;
     private readonly IDataDiffEngine _diffEngine;
     private readonly IFilePickerService _filePickerService;
+    private readonly ISearchEngine _searchEngine;
     private CancellationTokenSource? _operationCts;
     private TabularDataSet? _leftDataSet;
     private TabularDataSet? _rightDataSet;
     private DiffResult? _diffResult;
     private DiffGridRowViewModel? _pivotedSourceRow;
     private ColumnSettingsSnapshotEntry[]? _columnSettingsSnapshot;
+    private SearchResult? _searchResult;
+    private DiffRow[] _searchQualifyingRows = [];
+    private Dictionary<DiffRow, int> _diffRowOrdinalByRow = new();
+    private CancellationTokenSource? _searchCts;
+    private DispatcherTimer? _searchDebounceTimer;
+    private bool _isSyncingSearchFilters;
 
     public MainWindowViewModel(
         ITabularDataSourceFactory sourceFactory,
         IDataDiffEngine diffEngine,
-        IFilePickerService filePickerService)
+        IFilePickerService filePickerService,
+        ISearchEngine searchEngine)
     {
         _sourceFactory = sourceFactory;
         _diffEngine = diffEngine;
         _filePickerService = filePickerService;
+        _searchEngine = searchEngine;
 
         LeftSource = new SourcePaneViewModel("Left");
         RightSource = new SourcePaneViewModel("Right");
@@ -56,6 +66,7 @@ public partial class MainWindowViewModel : ViewModelBase
         ClosePivotViewCommand = new RelayCommand(ClosePivotView);
         PivotPreviousRowCommand = new RelayCommand(() => NavigatePivotRow(-1), () => CanNavigatePivotRow(-1));
         PivotNextRowCommand = new RelayCommand(() => NavigatePivotRow(1), () => CanNavigatePivotRow(1));
+        OpenSearchCommand = new RelayCommand(OpenSearch);
         OpenColumnSettingsCommand = new RelayCommand(OpenColumnSettings);
         ColumnSettingsOkCommand = new AsyncRelayCommand(ColumnSettingsOkAsync, () => !IsBusy);
         ColumnSettingsCancelCommand = new RelayCommand(CancelColumnSettings);
@@ -93,6 +104,8 @@ public partial class MainWindowViewModel : ViewModelBase
 
     public ObservableCollection<PivotedColumnViewModel> PivotedColumns { get; } = [];
 
+    public ObservableCollection<SearchColumnFilterViewModel> SearchColumnFilters { get; } = [];
+
     public IAsyncRelayCommand SetupLeftSourceCommand { get; }
 
     public IAsyncRelayCommand SetupRightSourceCommand { get; }
@@ -106,6 +119,8 @@ public partial class MainWindowViewModel : ViewModelBase
     public IRelayCommand PivotPreviousRowCommand { get; }
 
     public IRelayCommand PivotNextRowCommand { get; }
+
+    public IRelayCommand OpenSearchCommand { get; }
 
     public IRelayCommand OpenColumnSettingsCommand { get; }
 
@@ -145,6 +160,18 @@ public partial class MainWindowViewModel : ViewModelBase
     private bool _pivotSkipOrphanRows;
 
     [ObservableProperty]
+    private bool _isSearchMode;
+
+    [ObservableProperty]
+    private string _searchText = string.Empty;
+
+    [ObservableProperty]
+    private bool _searchUseRegex;
+
+    [ObservableProperty]
+    private bool _searchCaseSensitive;
+
+    [ObservableProperty]
     private bool _isColumnSettingsOpen;
 
     [ObservableProperty]
@@ -161,6 +188,16 @@ public partial class MainWindowViewModel : ViewModelBase
         { IsRightOrphan: true } => "Right-only row (no matching left row)",
         _ => "Matched row"
     };
+
+    public string PivotHeaderText => IsSearchMode ? "Search" : "Pivoted Row View";
+
+    public bool SearchHasRegexError => _searchResult?.HasRegexError ?? false;
+
+    public int SearchAfterFilterLeftCount => SearchColumnFilters.Where(x => !x.IsAll && x.IsIncluded).Sum(x => x.LeftCount);
+
+    public int SearchAfterFilterRightCount => SearchColumnFilters.Where(x => !x.IsAll && x.IsIncluded).Sum(x => x.RightCount);
+
+    public int SearchAfterFilterTotalCount => SearchAfterFilterLeftCount + SearchAfterFilterRightCount;
 
     // Disabled along with the main-screen "Column Options" editor: column selection is now
     // only surfaced through the Column Setup popover. Kept for potential reuse later.
@@ -299,6 +336,26 @@ public partial class MainWindowViewModel : ViewModelBase
     partial void OnPivotSkipOrphanRowsChanged(bool value)
     {
         NotifyPivotNavigationCanExecuteChanged();
+    }
+
+    partial void OnIsSearchModeChanged(bool value)
+    {
+        OnPropertyChanged(nameof(PivotHeaderText));
+    }
+
+    partial void OnSearchTextChanged(string value)
+    {
+        ScheduleSearchRecompute();
+    }
+
+    partial void OnSearchUseRegexChanged(bool value)
+    {
+        ScheduleSearchRecompute();
+    }
+
+    partial void OnSearchCaseSensitiveChanged(bool value)
+    {
+        ScheduleSearchRecompute();
     }
 
     partial void OnIsPivotOpenChanged(bool value)
@@ -451,9 +508,11 @@ public partial class MainWindowViewModel : ViewModelBase
         }
 
         ClosePivotView();
+        ResetSearchState();
 
         StatusText = "Comparing data...";
         _diffResult = await _diffEngine.CompareAsync(_leftDataSet, _rightDataSet, BuildRules(), cancellationToken);
+        _diffRowOrdinalByRow = BuildRowOrdinalLookup(_diffResult);
         ApplyVisibilityFilters();
         StatusText = $"Comparison complete. Showing {DisplayRows.Count} rows and {DisplayColumns.Count} columns.";
     }
@@ -679,11 +738,48 @@ public partial class MainWindowViewModel : ViewModelBase
 
     public void OpenPivotView(DiffGridRowViewModel row)
     {
+        IsSearchMode = false;
         _pivotedSourceRow = row;
         IsPivotOpen = true;
         OnPropertyChanged(nameof(PivotSubtitle));
         RebuildPivotedColumns();
         NotifyPivotNavigationCanExecuteChanged();
+    }
+
+    public event EventHandler? SearchFocusRequested;
+
+    private void OpenSearch()
+    {
+        if (_diffResult is null)
+        {
+            StatusText = "Run a comparison before searching.";
+            return;
+        }
+
+        if (IsColumnSettingsOpen)
+        {
+            CloseColumnSettingsWithoutSaving();
+        }
+
+        IsSearchMode = true;
+        IsPivotOpen = true;
+        OnPropertyChanged(nameof(PivotSubtitle));
+
+        if (_searchResult is null)
+        {
+            _ = RunSearchAsync();
+        }
+        else
+        {
+            ReconcileSearchPivotedRow();
+        }
+
+        NotifyPivotNavigationCanExecuteChanged();
+
+        // Fires every time OpenSearch runs (button click or Ctrl+F), even if IsSearchMode was
+        // already true and therefore wouldn't raise its own PropertyChanged - Ctrl+F must always
+        // refocus the search box, not just the first time search mode is entered.
+        SearchFocusRequested?.Invoke(this, EventArgs.Empty);
     }
 
     private void OpenColumnSettings()
@@ -803,6 +899,7 @@ public partial class MainWindowViewModel : ViewModelBase
         }
 
         IsPivotOpen = false;
+        IsSearchMode = false;
         _pivotedSourceRow = null;
         PivotedColumns.Clear();
         OnPropertyChanged(nameof(PivotSubtitle));
@@ -836,10 +933,22 @@ public partial class MainWindowViewModel : ViewModelBase
         return index;
     }
 
-    private bool CanNavigatePivotRow(int delta) => FindPivotNavigationTargetIndex(delta) is not null;
+    private bool CanNavigatePivotRow(int delta) =>
+        IsSearchMode ? FindSearchPivotNavigationTarget(delta) is not null : FindPivotNavigationTargetIndex(delta) is not null;
 
     private void NavigatePivotRow(int delta)
     {
+        if (IsSearchMode)
+        {
+            var target = FindSearchPivotNavigationTarget(delta);
+            if (target is not null)
+            {
+                SetPivotedRow(target);
+            }
+
+            return;
+        }
+
         var targetIndex = FindPivotNavigationTargetIndex(delta);
         if (targetIndex is null)
         {
@@ -847,6 +956,43 @@ public partial class MainWindowViewModel : ViewModelBase
         }
 
         _pivotedSourceRow = DisplayRows[targetIndex.Value];
+        OnPropertyChanged(nameof(PivotSubtitle));
+        RebuildPivotedColumns();
+        NotifyPivotNavigationCanExecuteChanged();
+    }
+
+    private DiffRow? FindSearchPivotNavigationTarget(int delta)
+    {
+        if (_pivotedSourceRow is null || _searchQualifyingRows.Length == 0)
+        {
+            return null;
+        }
+
+        var currentIndex = Array.IndexOf(_searchQualifyingRows, _pivotedSourceRow.Row);
+        if (currentIndex < 0)
+        {
+            return null;
+        }
+
+        var index = currentIndex;
+        do
+        {
+            index += delta;
+            if (index < 0 || index >= _searchQualifyingRows.Length)
+            {
+                return null;
+            }
+        }
+        while (PivotSkipOrphanRows && IsOrphanRow(_searchQualifyingRows[index]));
+
+        return _searchQualifyingRows[index];
+    }
+
+    private static bool IsOrphanRow(DiffRow row) => row.IsLeftOrphan || row.IsRightOrphan;
+
+    private void SetPivotedRow(DiffRow row)
+    {
+        _pivotedSourceRow = new DiffGridRowViewModel(row, []);
         OnPropertyChanged(nameof(PivotSubtitle));
         RebuildPivotedColumns();
         NotifyPivotNavigationCanExecuteChanged();
@@ -869,6 +1015,8 @@ public partial class MainWindowViewModel : ViewModelBase
 
         var optionsByOrdinal = ColumnOptions.ToDictionary(x => x.Ordinal);
         var row = _pivotedSourceRow.Row;
+        SearchRowMatch? rowMatch = null;
+        _searchResult?.RowMatches.TryGetValue(row, out rowMatch);
 
         foreach (var column in _diffResult.Columns.OrderBy(x => x.Ordinal))
         {
@@ -881,7 +1029,10 @@ public partial class MainWindowViewModel : ViewModelBase
             var isKey = option?.Role == ColumnRole.Key;
             var cell = row.Cells[column.Ordinal];
 
-            if (!PivotShowAllColumns && !isKey && !cell.IsDifferent)
+            var isSearchMatchLeft = IsSearchMode && rowMatch is not null && rowMatch.LeftMatchedOrdinals.Contains(column.Ordinal);
+            var isSearchMatchRight = IsSearchMode && rowMatch is not null && rowMatch.RightMatchedOrdinals.Contains(column.Ordinal);
+
+            if (!PivotShowAllColumns && !isKey && !cell.IsDifferent && !isSearchMatchLeft && !isSearchMatchRight)
             {
                 continue;
             }
@@ -892,10 +1043,238 @@ public partial class MainWindowViewModel : ViewModelBase
                 ColumnName = column.Name,
                 IsKeyColumn = isKey,
                 IsDifferent = cell.IsDifferent,
-                LeftCell = DiffGridCellFactory.CreateLeft(row, cell),
-                RightCell = DiffGridCellFactory.CreateRight(row, cell)
+                LeftCell = DiffGridCellFactory.CreateLeft(row, cell, isSearchMatchLeft),
+                RightCell = DiffGridCellFactory.CreateRight(row, cell, isSearchMatchRight)
             });
         }
+    }
+
+    private void ScheduleSearchRecompute()
+    {
+        _searchDebounceTimer ??= new DispatcherTimer(DispatcherPriority.Background) { Interval = TimeSpan.FromMilliseconds(300) };
+        _searchDebounceTimer.Stop();
+        _searchDebounceTimer.Tick -= OnSearchDebounceTick;
+        _searchDebounceTimer.Tick += OnSearchDebounceTick;
+        _searchDebounceTimer.Start();
+    }
+
+    private void OnSearchDebounceTick(object? sender, EventArgs e)
+    {
+        _searchDebounceTimer!.Stop();
+        _ = RunSearchAsync();
+    }
+
+    private async Task RunSearchAsync()
+    {
+        _searchCts?.Cancel();
+
+        if (_diffResult is null)
+        {
+            return;
+        }
+
+        var cts = new CancellationTokenSource();
+        _searchCts = cts;
+        var options = new SearchOptions
+        {
+            QueryText = SearchText,
+            UseRegex = SearchUseRegex,
+            CaseSensitive = SearchCaseSensitive
+        };
+
+        try
+        {
+            var result = await _searchEngine.SearchAsync(_diffResult, options, cts.Token);
+            if (cts.IsCancellationRequested)
+            {
+                return;
+            }
+
+            ApplySearchResult(result);
+        }
+        catch (OperationCanceledException)
+        {
+        }
+    }
+
+    private void ApplySearchResult(SearchResult result)
+    {
+        _searchResult = result;
+        RebuildSearchColumnFilters(result);
+        RefreshSearchQualifyingRows();
+        ReconcileSearchPivotedRow();
+        OnPropertyChanged(nameof(SearchHasRegexError));
+        UpdateSearchAfterFilterSummary();
+        NotifyPivotNavigationCanExecuteChanged();
+    }
+
+    private void RebuildSearchColumnFilters(SearchResult result)
+    {
+        foreach (var filter in SearchColumnFilters)
+        {
+            filter.PropertyChanged -= OnSearchColumnFilterPropertyChanged;
+        }
+
+        SearchColumnFilters.Clear();
+
+        if (result.ColumnMatches.Count == 0)
+        {
+            return;
+        }
+
+        var allRow = new SearchColumnFilterViewModel
+        {
+            IsAll = true,
+            Ordinal = -1,
+            ColumnName = "ALL",
+            LeftCount = result.ColumnMatches.Sum(x => x.LeftCount),
+            RightCount = result.ColumnMatches.Sum(x => x.RightCount)
+        };
+        allRow.PropertyChanged += OnSearchColumnFilterPropertyChanged;
+        SearchColumnFilters.Add(allRow);
+
+        foreach (var columnMatch in result.ColumnMatches)
+        {
+            var filter = new SearchColumnFilterViewModel
+            {
+                IsAll = false,
+                Ordinal = columnMatch.Ordinal,
+                ColumnName = columnMatch.ColumnName,
+                LeftCount = columnMatch.LeftCount,
+                RightCount = columnMatch.RightCount
+            };
+            filter.PropertyChanged += OnSearchColumnFilterPropertyChanged;
+            SearchColumnFilters.Add(filter);
+        }
+    }
+
+    private void OnSearchColumnFilterPropertyChanged(object? sender, PropertyChangedEventArgs e)
+    {
+        if (e.PropertyName != nameof(SearchColumnFilterViewModel.IsIncluded) || _isSyncingSearchFilters)
+        {
+            return;
+        }
+
+        if (sender is not SearchColumnFilterViewModel changed)
+        {
+            return;
+        }
+
+        _isSyncingSearchFilters = true;
+        try
+        {
+            if (changed.IsAll)
+            {
+                foreach (var filter in SearchColumnFilters.Where(x => !x.IsAll))
+                {
+                    filter.IsIncluded = changed.IsIncluded;
+                }
+            }
+            else
+            {
+                var allRow = SearchColumnFilters.FirstOrDefault(x => x.IsAll);
+                if (allRow is not null)
+                {
+                    allRow.IsIncluded = changed.IsIncluded && SearchColumnFilters.Where(x => !x.IsAll).All(x => x.IsIncluded);
+                }
+            }
+        }
+        finally
+        {
+            _isSyncingSearchFilters = false;
+        }
+
+        RefreshSearchQualifyingRows();
+        ReconcileSearchPivotedRow();
+        UpdateSearchAfterFilterSummary();
+        NotifyPivotNavigationCanExecuteChanged();
+    }
+
+    private void UpdateSearchAfterFilterSummary()
+    {
+        OnPropertyChanged(nameof(SearchAfterFilterLeftCount));
+        OnPropertyChanged(nameof(SearchAfterFilterRightCount));
+        OnPropertyChanged(nameof(SearchAfterFilterTotalCount));
+    }
+
+    private void RefreshSearchQualifyingRows()
+    {
+        if (_diffResult is null || _searchResult is null || _searchResult.ColumnMatches.Count == 0)
+        {
+            _searchQualifyingRows = [];
+            return;
+        }
+
+        var includedOrdinals = SearchColumnFilters
+            .Where(x => !x.IsAll && x.IsIncluded)
+            .Select(x => x.Ordinal)
+            .ToHashSet();
+
+        _searchQualifyingRows = _diffResult.Rows
+            .Where(row => _searchResult.RowMatches.TryGetValue(row, out var match)
+                && (match.LeftMatchedOrdinals.Overlaps(includedOrdinals) || match.RightMatchedOrdinals.Overlaps(includedOrdinals)))
+            .ToArray();
+    }
+
+    private void ReconcileSearchPivotedRow()
+    {
+        if (!IsSearchMode)
+        {
+            return;
+        }
+
+        if (_pivotedSourceRow is not null && _searchQualifyingRows.Contains(_pivotedSourceRow.Row))
+        {
+            RebuildPivotedColumns();
+            NotifyPivotNavigationCanExecuteChanged();
+            return;
+        }
+
+        if (_searchQualifyingRows.Length == 0)
+        {
+            _pivotedSourceRow = null;
+            PivotedColumns.Clear();
+            OnPropertyChanged(nameof(PivotSubtitle));
+            NotifyPivotNavigationCanExecuteChanged();
+            return;
+        }
+
+        var previousOrdinal = _pivotedSourceRow is not null && _diffRowOrdinalByRow.TryGetValue(_pivotedSourceRow.Row, out var ordinal)
+            ? ordinal
+            : -1;
+
+        var next = _searchQualifyingRows.FirstOrDefault(r => _diffRowOrdinalByRow[r] >= previousOrdinal) ?? _searchQualifyingRows[^1];
+        SetPivotedRow(next);
+    }
+
+    private void ResetSearchState()
+    {
+        _searchCts?.Cancel();
+        _searchDebounceTimer?.Stop();
+        _searchResult = null;
+        _searchQualifyingRows = [];
+
+        foreach (var filter in SearchColumnFilters)
+        {
+            filter.PropertyChanged -= OnSearchColumnFilterPropertyChanged;
+        }
+
+        SearchColumnFilters.Clear();
+        SearchText = string.Empty;
+
+        OnPropertyChanged(nameof(SearchHasRegexError));
+        UpdateSearchAfterFilterSummary();
+    }
+
+    private static Dictionary<DiffRow, int> BuildRowOrdinalLookup(DiffResult result)
+    {
+        var map = new Dictionary<DiffRow, int>(result.Rows.Count);
+        for (var i = 0; i < result.Rows.Count; i++)
+        {
+            map[result.Rows[i]] = i;
+        }
+
+        return map;
     }
 
     // Disabled along with the main-screen "Column Options" editor. Kept for potential reuse later.

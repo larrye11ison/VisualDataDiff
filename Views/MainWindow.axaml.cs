@@ -25,6 +25,7 @@ public partial class MainWindow : Window
 	private static readonly IBrush ActualDifferenceBrush = new SolidColorBrush(Color.Parse("#2B7F3F00"));
 	private static readonly IBrush OrphanHatchBrush = CreateOrphanHatchBrush();
 	private static readonly IBrush GridLineBrush = new SolidColorBrush(Color.Parse("#33FFFFFF"));
+	private static readonly IBrush SearchMatchBorderBrush = new SolidColorBrush(Color.Parse("#FF2ECC71"));
 	private static readonly DiffGridCellViewModel EmptyCell = new()
 	{
 		Value = string.Empty,
@@ -81,6 +82,7 @@ public partial class MainWindow : Window
 		{
 			_viewModel.DisplayColumns.CollectionChanged -= OnDisplayColumnsChanged;
 			_viewModel.PropertyChanged -= OnViewModelPropertyChanged;
+			_viewModel.SearchFocusRequested -= OnSearchFocusRequested;
 		}
 
 		_viewModel = DataContext as MainWindowViewModel;
@@ -89,6 +91,7 @@ public partial class MainWindow : Window
 		{
 			_viewModel.DisplayColumns.CollectionChanged += OnDisplayColumnsChanged;
 			_viewModel.PropertyChanged += OnViewModelPropertyChanged;
+			_viewModel.SearchFocusRequested += OnSearchFocusRequested;
 		}
 
 		ScheduleRebuildTreeGridSources();
@@ -100,6 +103,14 @@ public partial class MainWindow : Window
 		{
 			RestorePivotReturnFocus();
 		}
+	}
+
+	private void OnSearchFocusRequested(object? sender, EventArgs e)
+	{
+		// Posted at Background priority so this runs after the search row's IsVisible="{Binding
+		// IsSearchMode}" binding has actually applied and laid out - focusing too early (same
+		// frame) would target a control that isn't visible/focusable yet.
+		Dispatcher.UIThread.Post(() => SearchTextBox.Focus(), DispatcherPriority.Background);
 	}
 
 	private void OnDisplayColumnsChanged(object? sender, NotifyCollectionChangedEventArgs e)
@@ -259,17 +270,29 @@ public partial class MainWindow : Window
 
 	private static Control CreateCellElement(DiffGridCellViewModel cell)
 	{
+		var textBlock = new TextBlock
+		{
+			Text = cell.DisplayValue,
+			Foreground = cell.IsActualDifference ? Brushes.Goldenrod : Brushes.White
+		};
+
+		Control content = cell.IsSearchMatch
+			? new Border
+			{
+				BorderBrush = SearchMatchBorderBrush,
+				BorderThickness = new Thickness(2),
+				Padding = new Thickness(2),
+				Child = textBlock
+			}
+			: textBlock;
+
 		return new Border
 		{
 			Padding = new Thickness(4, 2),
 			BorderBrush = GridLineBrush,
 			BorderThickness = new Thickness(0, 0, 1, 1),
 			Background = GetCellBackground(cell),
-			Child = new TextBlock
-			{
-				Text = cell.DisplayValue,
-				Foreground = cell.IsActualDifference ? Brushes.Goldenrod : Brushes.White
-			}
+			Child = content
 		};
 	}
 
@@ -527,6 +550,17 @@ public partial class MainWindow : Window
 			return;
 		}
 
+		if (e.Key == Key.F && e.KeyModifiers == KeyModifiers.Control)
+		{
+			if (!_viewModel.IsColumnSettingsOpen && _viewModel.OpenSearchCommand.CanExecute(null))
+			{
+				_viewModel.OpenSearchCommand.Execute(null);
+				e.Handled = true;
+			}
+
+			return;
+		}
+
 		if (_viewModel.IsColumnSettingsOpen)
 		{
 			if (e.Key == Key.Escape && _viewModel.ColumnSettingsCancelCommand.CanExecute(null))
@@ -550,12 +584,12 @@ public partial class MainWindow : Window
 				e.Handled = true;
 				break;
 
-			case Key.Up when _viewModel.PivotPreviousRowCommand.CanExecute(null):
+			case Key.Up when e.Source is not TextBox && _viewModel.PivotPreviousRowCommand.CanExecute(null):
 				_viewModel.PivotPreviousRowCommand.Execute(null);
 				e.Handled = true;
 				break;
 
-			case Key.Down when _viewModel.PivotNextRowCommand.CanExecute(null):
+			case Key.Down when e.Source is not TextBox && _viewModel.PivotNextRowCommand.CanExecute(null):
 				_viewModel.PivotNextRowCommand.Execute(null);
 				e.Handled = true;
 				break;
