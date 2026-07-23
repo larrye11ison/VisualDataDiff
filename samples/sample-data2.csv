@@ -1,0 +1,21 @@
+ID,FirstName,LastName,SSN,Phone,Address,City,State,Salary,CommissionRate
+3,Robert,Thompson,345-67-6703,(555) 201-1003,905 Maple St,Columbus,OH,"$61,250.00",2.5%
+4,Linda,MARTINEZ,456-78-6704,(555) 201-1004,33 Cedar Ave,Austin,TX,"$84,900.00",5.0%
+5,Michael,Johnson,567-89-6705,(555) 201-1005,760 Willow Ct,Denver,CO,"$77,400.00",3.0%
+6,Patricia,Lee,678-90-6706,(555) 201-9006,245 Elm St,Portland,OR,"$69,800.00",4.5%
+7,William,Davis,789-01-6707,(555) 201-1007,58 Pine Ridge Rd,Nashville,TN,"$73,100.00",2.0%
+8,Barbara,Wilson,890-12-6708,(555) 201-1008,"610 Sunset Blvd   ",Sacramento,CA,"$91,200.00",6.0%
+9,David,Moore,901-23-6709,(555) 201-1009,372 Highland Ave,Phoenix,AZ,"$65,700.00",3.5%
+10,Susan,Taylor,112-34-6710,(555) 201-1010,849 Lakeview Dr,Orlando,FL,"$71,800.00",4.0%
+11,Richard,Anderson,223-45-6711,(555) 201-1011,27 Riverside Dr,Charlotte,NC,"$76,800.00",3.0%
+12,Jennifer,Thomas,334-56-6712,(555) 201-1012,514 Meadow Ln,Boise,ID,"$62,400.00",2.5%
+13,Charles,Jackson,445-67-6713,(555) 201-1013,188 Forest Ave,Tulsa,OK,"$67,900.00",5.0%
+14,Karen,White,556-78-6714,(555) 201-1014,703 Hilltop Rd,Omaha,NE,"$71,600.00",3.5%
+15,Joseph,Harris,667-89-6715,(555) 201-1015,96 Brookside Dr,Richmond,VA,"$80,300.00",5.5%
+16,Nancy,Martin,778-90-6716,(555) 201-1016,421 Chestnut St,Lexington,KY,"$64,500.00",3.0%
+17,Thomas,Thompson,889-01-6717,(555) 201-1017,655 Spruce Ln,Wichita,KS,"$69,300.00",4.0%
+18,Betty,Clark,990-12-6718,(555) 201-1018,312 Aspen Way,Tucson,AZ,"$73,800.00",2.5%
+19,Christopher,Lewis,101-23-9719,(555) 201-1019,47 Magnolia Ct,Anchorage,AK,"$86,200.00",6.5%
+20,Sandra,Walker,212-34-6720,(555) 201-1020,928 Redwood Dr,Providence,RI,"$68,900.00",3.0%
+21,Daniel,Young,323-45-6721,(555) 201-1021,165 Sycamore Ave,Baton Rouge,LA,"$71,400.00",4.0%
+22,Donna,King,434-56-6722,(555) 201-1022,740 Fairview Rd,Burlington,VT,"$66,700.00",3.5%
