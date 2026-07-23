@@ -10,7 +10,7 @@ namespace VisualDataDiff.Utilities;
 /// </summary>
 public static class DiffGridCellFactory
 {
-	public static DiffGridCellViewModel CreateLeft(DiffRow row, DiffCell cell)
+	public static DiffGridCellViewModel CreateLeft(DiffRow row, DiffCell cell, bool isSearchMatch = false)
 	{
 		var hasOrphan = row.IsLeftOrphan || row.IsRightOrphan;
 		return new DiffGridCellViewModel
@@ -18,11 +18,12 @@ public static class DiffGridCellFactory
 			Value = cell.LeftValue ?? string.Empty,
 			IsDifferent = cell.IsDifferent,
 			IsOrphanPlaceholder = row.IsRightOrphan,
-			IsActualDifference = cell.IsDifferent && !hasOrphan
+			IsActualDifference = cell.IsDifferent && !hasOrphan,
+			IsSearchMatch = isSearchMatch
 		};
 	}
 
-	public static DiffGridCellViewModel CreateRight(DiffRow row, DiffCell cell)
+	public static DiffGridCellViewModel CreateRight(DiffRow row, DiffCell cell, bool isSearchMatch = false)
 	{
 		var hasOrphan = row.IsLeftOrphan || row.IsRightOrphan;
 		return new DiffGridCellViewModel
@@ -30,7 +31,8 @@ public static class DiffGridCellFactory
 			Value = cell.RightValue ?? string.Empty,
 			IsDifferent = cell.IsDifferent,
 			IsOrphanPlaceholder = row.IsLeftOrphan,
-			IsActualDifference = cell.IsDifferent && !hasOrphan
+			IsActualDifference = cell.IsDifferent && !hasOrphan,
+			IsSearchMatch = isSearchMatch
 		};
 	}
 }

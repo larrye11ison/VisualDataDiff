@@ -30,6 +30,9 @@ Diffing two spreadsheets by eye is tedious and error-prone — rows get reordere
 ### Pivoted row view
 Need to inspect one record closely instead of scanning a wide table? Double-click a row (or hit `Enter` with a cell focused) to flip that row 90 degrees into a full-window, column-per-line view with left/right values side by side. By default it only shows columns that actually differ plus your key columns — flip a switch to see everything. Navigate to the next/previous row with on-screen buttons or `↑`/`↓`, optionally skipping orphan rows so you only stop on rows that exist on both sides. `Esc` (or the row/column filters) puts you right back where you left off, focus and all.
 
+### Search
+Hit the **Search** button or `Ctrl+F` to look for a value across the entire comparison — plain substring or regex, with an optional case-sensitivity toggle. Results are broken down per column with left/right/total match counts, and a cascading set of checkboxes (including a select-all "ALL" row) lets you include or exclude individual columns from what counts as a result. Browse matches one at a time in the pivoted row view, where every matching cell gets a green outline — kept independent of the existing difference highlighting, so a cell that's both different *and* a match shows both cues at once.
+
 ### Performance
 Tested comfortably with datasets in the thousands of rows and dozens of columns. Grid virtualization uses a measured, fixed row height so the UI stays responsive regardless of dataset size, and collection updates are batched to avoid the classic "thousands of individual UI notifications" slowdown.
 

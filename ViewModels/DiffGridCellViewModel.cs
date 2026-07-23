@@ -10,5 +10,7 @@ public sealed class DiffGridCellViewModel
 
 	public required bool IsActualDifference { get; init; }
 
+	public bool IsSearchMatch { get; init; }
+
 	public string DisplayValue => Value;
 }
