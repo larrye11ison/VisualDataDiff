@@ -24,7 +24,7 @@ public partial class MainWindow : Window
 	private const string DiffCellTemplateKey = "DiffCellTemplate";
 
 	private static readonly IBrush ActualDifferenceBrush = new SolidColorBrush(Color.Parse("#2B7F3F00"));
-	private static readonly IBrush OrphanRowBrush = new SolidColorBrush(Color.Parse("#2B87CEFA"));
+	private static readonly IBrush OrphanRowBrush = new SolidColorBrush(Color.Parse("#404682B4"));
 	private static readonly IBrush OrphanHatchBrush = CreateOrphanHatchBrush();
 	private static readonly IBrush GridLineBrush = new SolidColorBrush(Color.Parse("#33FFFFFF"));
 	private static readonly IBrush SearchMatchBorderBrush = new SolidColorBrush(Color.Parse("#FF2ECC71"));
@@ -281,7 +281,9 @@ public partial class MainWindow : Window
 		var textBlock = new TextBlock
 		{
 			Text = cell.DisplayValue,
-			Foreground = cell.IsActualDifference ? Brushes.Goldenrod : Brushes.White
+			Foreground = cell.IsActualDifference ? Brushes.Goldenrod
+				: cell.IsOrphanRowData ? Brushes.DodgerBlue
+				: Brushes.White
 		};
 
 		Control content = cell.IsSearchMatch
