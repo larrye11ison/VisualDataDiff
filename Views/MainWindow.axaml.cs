@@ -14,6 +14,7 @@ using Avalonia.Threading;
 using Avalonia.VisualTree;
 using Avalonia.Visuals;
 using VisualDataDiff.Models;
+using VisualDataDiff.Utilities;
 using VisualDataDiff.ViewModels;
 
 namespace VisualDataDiff.Views;
@@ -572,6 +573,17 @@ public partial class MainWindow : Window
 			return;
 		}
 
+		if (_viewModel.IsDelimitedTextConfigOpen)
+		{
+			if (e.Key == Key.Escape)
+			{
+				_viewModel.DelimitedTextConfigCancelCommand.Execute(null);
+				e.Handled = true;
+			}
+
+			return;
+		}
+
 		if (!_viewModel.IsPivotOpen)
 		{
 			return;
@@ -614,37 +626,64 @@ public partial class MainWindow : Window
 			return;
 		}
 
-		if (!TryGetValidExcelPaths(files, out var excelPaths))
+		if (!TryGetLocalFilePaths(files, out var paths))
 		{
-			_viewModel.StatusText = "Drop 1 or 2 Excel files (.xlsx or .xls) — every dropped file must be a valid Excel file.";
+			_viewModel.StatusText = "Drop 1 or 2 local files.";
 			return;
 		}
 
-		if (excelPaths.Length == 2)
+		var classifications = paths.Select(ClassifyDroppedFile).ToArray();
+
+		if (classifications.Length == 2)
 		{
-			AssignSource(_viewModel.LeftSource, excelPaths[0]);
-			AssignSource(_viewModel.RightSource, excelPaths[1]);
+			AssignSource(_viewModel.LeftSource, classifications[0]);
+			AssignSource(_viewModel.RightSource, classifications[1]);
+
+			var panes = new[] { _viewModel.LeftSource, _viewModel.RightSource };
+			var wizardTargets = classifications
+				.Zip(panes, (c, pane) => (c, pane))
+				.Where(x => x.c.NeedsWizard)
+				.Select(x => x.pane)
+				.ToArray();
+
+			if (wizardTargets.Length > 0)
+			{
+				_viewModel.StatusText = wizardTargets.Length == 2
+					? "Two files dropped — assigned to Left and Right. Delimiter could not be detected for either; configure Left, then configure Right."
+					: $"Two files dropped — assigned to Left and Right. Delimiter could not be detected for {wizardTargets[0].Title}; configure it before comparing.";
+				_viewModel.ConfigureSource(wizardTargets[0]);
+				return;
+			}
+
 			_viewModel.StatusText = "Two files dropped — assigned to Left and Right sources.";
 			TryTriggerLoad();
 			return;
 		}
 
-		switch (DetermineDropZone(e))
+		var pane = DetermineDropZone(e) switch
 		{
-			case DropZone.Left:
-				AssignSource(_viewModel.LeftSource, excelPaths[0]);
-				TryTriggerLoad();
-				break;
+			DropZone.Left => _viewModel.LeftSource,
+			DropZone.Right => _viewModel.RightSource,
+			_ => null
+		};
 
-			case DropZone.Right:
-				AssignSource(_viewModel.RightSource, excelPaths[0]);
-				TryTriggerLoad();
-				break;
-
-			default:
-				_viewModel.StatusText = "Drop a single file onto the Left or Right grid, or drop two files anywhere to fill both.";
-				break;
+		if (pane is null)
+		{
+			_viewModel.StatusText = "Drop a single file onto the Left or Right grid, or drop two files anywhere to fill both.";
+			return;
 		}
+
+		var classification = classifications[0];
+		AssignSource(pane, classification);
+
+		if (classification.NeedsWizard)
+		{
+			_viewModel.StatusText = $"Delimiter could not be detected for the dropped file — configure {pane.Title} before comparing.";
+			_viewModel.ConfigureSource(pane);
+			return;
+		}
+
+		TryTriggerLoad();
 	}
 
 	private void TryTriggerLoad()
@@ -655,42 +694,63 @@ public partial class MainWindow : Window
 		}
 	}
 
-	private static bool TryGetValidExcelPaths(IReadOnlyList<IStorageItem> files, out string[] excelPaths)
+	private readonly record struct DroppedFileClassification(
+		string Path, SourceType SourceType, char Delimiter, char? QuoteCharacter, bool NeedsWizard);
+
+	private static DroppedFileClassification ClassifyDroppedFile(string path)
 	{
-		excelPaths = [];
+		var extension = Path.GetExtension(path);
+
+		if (extension.Equals(".xlsx", StringComparison.OrdinalIgnoreCase) || extension.Equals(".xls", StringComparison.OrdinalIgnoreCase))
+		{
+			return new DroppedFileClassification(path, SourceType.Excel, ',', '"', NeedsWizard: false);
+		}
+
+		if (extension.Equals(".csv", StringComparison.OrdinalIgnoreCase))
+		{
+			return new DroppedFileClassification(path, SourceType.DelimitedText, ',', '"', NeedsWizard: false);
+		}
+
+		var sniff = DelimitedTextSniffer.TrySniff(path);
+		if (sniff is { } result)
+		{
+			return new DroppedFileClassification(path, SourceType.DelimitedText, result.Delimiter, '"', NeedsWizard: false);
+		}
+
+		return new DroppedFileClassification(path, SourceType.DelimitedText, ',', '"', NeedsWizard: true);
+	}
+
+	private static void AssignSource(SourcePaneViewModel source, DroppedFileClassification classification)
+	{
+		source.SelectedSourceType = classification.SourceType;
+		source.DelimiterCharacter = classification.Delimiter;
+		source.QuoteCharacter = classification.QuoteCharacter;
+		source.Location = classification.Path;
+	}
+
+	private static bool TryGetLocalFilePaths(IReadOnlyList<IStorageItem> files, out string[] paths)
+	{
+		paths = [];
 
 		if (files.Count is < 1 or > 2)
 		{
 			return false;
 		}
 
-		var paths = new string[files.Count];
+		var result = new string[files.Count];
 		for (var i = 0; i < files.Count; i++)
 		{
 			var path = files[i].TryGetLocalPath();
-			if (string.IsNullOrWhiteSpace(path) || !IsExcelFile(path))
+			if (string.IsNullOrWhiteSpace(path) || !File.Exists(path))
 			{
 				return false;
 			}
 
-			paths[i] = path;
+			result[i] = path;
 		}
 
-		excelPaths = paths;
+		paths = result;
 		return true;
-	}
-
-	private static void AssignSource(SourcePaneViewModel source, string path)
-	{
-		source.SelectedSourceType = SourceType.Excel;
-		source.Location = path;
-	}
-
-	private static bool IsExcelFile(string path)
-	{
-		var extension = Path.GetExtension(path);
-		return extension.Equals(".xlsx", StringComparison.OrdinalIgnoreCase)
-			|| extension.Equals(".xls", StringComparison.OrdinalIgnoreCase);
 	}
 
 	private DropZone DetermineDropZone(DragEventArgs e)

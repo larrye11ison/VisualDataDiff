@@ -16,6 +16,10 @@ Diffing two spreadsheets by eye is tedious and error-prone — rows get reordere
 
 ## Features
 
+### Flexible source loading
+- Load Excel (`.xls`/`.xlsx`) or delimited text — CSV, TSV, pipe-delimited, or any other consistently-separated format — and mix and match: the left and right sides don't need to be the same type. Delimited text parsing uses [CsvHelper](https://joshclose.github.io/CsvHelper/) for full RFC 4180 compliance (quoted fields, embedded delimiters and newlines, escaped quotes). A **Configure** wizard — similar to Excel's Text Import Wizard — lets you customize the delimiter and quote/literal character, with a live preview of how the file parses.
+- **Drag and drop** files straight onto the window instead of using the file picker: drop two at once to fill both sides and compare immediately, or drop one onto either grid to fill just that side. `.xlsx`/`.xls`/`.csv` are trusted by extension; anything else is sniffed for tab- or pipe-delimited structure. If the delimiter can't be confidently detected, the file is still loaded as delimited text and the Configure wizard opens automatically so you can finish the setup by hand.
+
 ### Smart comparison
 - **Key-based row matching** — designate one or more columns as the match key; rows are paired up regardless of order, with duplicates handled via first-in/first-out matching per key.
 - **Per-column comparison rules** — mark columns as `Key`, `Ignored`, or `Normal`, independently toggle case-sensitivity and leading/trailing whitespace trimming.
@@ -48,7 +52,7 @@ dotnet run
 
 ### Basic workflow
 
-1. Pick a **Source Type** and **Setup Source** for both the Left and Right panes (currently supports Excel `.xls`/`.xlsx`, with a header-row toggle).
+1. Pick a **Source Type** (Excel or Delimited Text) and **Setup Source** for both the Left and Right panes — or skip this and just drag and drop one or two files onto the window instead. Delimited text sources get a **Configure...** button for setting the delimiter and quote character.
 2. Hit **Load + Compare**.
 3. Click a column to configure its role (`Key`/`Ignored`/`Normal`) and comparison rules, then **Recompare with current column options** — no need to reload the files.
 4. Use the **Row Visibility** and **Column Visibility** controls to zero in on what matters.
@@ -56,17 +60,17 @@ dotnet run
 
 ## Architecture
 
-A straightforward MVVM app with a pluggable data-source abstraction — Excel is the first implementation, but the diff engine and UI don't know or care where rows come from.
+A straightforward MVVM app with a pluggable data-source abstraction — Excel and delimited text are the two implementations so far, but the diff engine and UI don't know or care where rows come from.
 
 ```
 Models/          Plain data types: TabularDataSet, DiffResult, DiffRow/DiffCell, comparison rules
-Services/        ITabularDataSource + ExcelTabularDataSource, IDataDiffEngine + DataDiffEngine
+Services/        ITabularDataSource + Excel/DelimitedText implementations, IDataDiffEngine + DataDiffEngine
 ViewModels/      MainWindowViewModel and friends (CommunityToolkit.Mvvm)
 Views/           MainWindow.axaml — the two-grid layout, pivot overlay, and TreeDataGrid wiring
-Utilities/       Shared helpers (cell-state factory, batched observable collection, column naming)
+Utilities/       Shared helpers (cell-state factory, batched observable collection, column naming, delimiter sniffing)
 ```
 
-Adding a new source type (CSV, a database query, an API) means implementing `ITabularDataSource` — the comparison engine and UI work unchanged.
+Adding a new source type (a database query, an API) means implementing `ITabularDataSource` — the comparison engine and UI work unchanged.
 
 ## Tech stack
 
@@ -74,4 +78,5 @@ Adding a new source type (CSV, a database query, an API) means implementing `ITa
 - [Avalonia.Controls.TreeDataGrid](https://github.com/AvaloniaUI/Avalonia.Controls.TreeDataGrid) — virtualized grid control
 - [CommunityToolkit.Mvvm](https://github.com/CommunityToolkit/dotnet) — MVVM source generators
 - [ExcelDataReader](https://github.com/ExcelDataReader/ExcelDataReader) — `.xls`/`.xlsx` parsing
+- [CsvHelper](https://joshclose.github.io/CsvHelper/) — RFC 4180-compliant delimited text parsing
 - .NET 10

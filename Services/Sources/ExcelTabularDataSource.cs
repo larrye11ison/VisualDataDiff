@@ -53,7 +53,7 @@ public sealed class ExcelTabularDataSource : ITabularDataSource
 
 					if (columns is null)
 					{
-						columns = BuildColumns(values, configuration.TreatFirstRowAsHeader);
+						columns = TabularColumnBuilder.BuildColumns(values, configuration.TreatFirstRowAsHeader);
 						if (configuration.TreatFirstRowAsHeader)
 						{
 							continue;
@@ -78,24 +78,6 @@ public sealed class ExcelTabularDataSource : ITabularDataSource
 				Rows = rows
 			};
 		}, cancellationToken);
-	}
-
-	private static List<TabularColumn> BuildColumns(IReadOnlyList<string?> firstRow, bool useHeader)
-	{
-		var columns = new List<TabularColumn>(firstRow.Count);
-
-		for (var i = 0; i < firstRow.Count; i++)
-		{
-			var name = useHeader ? firstRow[i] : null;
-			if (string.IsNullOrWhiteSpace(name))
-			{
-				name = ExcelColumnNameHelper.ToColumnName(i);
-			}
-
-			columns.Add(new TabularColumn(i, name));
-		}
-
-		return columns;
 	}
 
 	private static void EnsureEncodingsRegistered()

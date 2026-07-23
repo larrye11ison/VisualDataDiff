@@ -12,7 +12,8 @@ public sealed class TabularDataSourceFactory : ITabularDataSourceFactory
 	{
 		_sources = new Dictionary<SourceType, ITabularDataSource>
 		{
-			[SourceType.Excel] = new ExcelTabularDataSource()
+			[SourceType.Excel] = new ExcelTabularDataSource(),
+			[SourceType.DelimitedText] = new DelimitedTextTabularDataSource()
 		};
 	}
 

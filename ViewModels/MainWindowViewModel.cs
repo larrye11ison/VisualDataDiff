@@ -5,6 +5,7 @@ using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
 using VisualDataDiff.Models;
 using VisualDataDiff.Services.Abstractions;
+using VisualDataDiff.Services.Sources;
 using VisualDataDiff.Utilities;
 
 namespace VisualDataDiff.ViewModels;
@@ -27,6 +28,11 @@ public partial class MainWindowViewModel : ViewModelBase
     private CancellationTokenSource? _searchCts;
     private DispatcherTimer? _searchDebounceTimer;
     private bool _isSyncingSearchFilters;
+    private SourcePaneViewModel? _configuringSource;
+    private string? _delimitedTextPreviewSample;
+
+    private const int PreviewSampleCharBudget = 64 * 1024;
+    private const int PreviewRowCap = 40;
 
     public MainWindowViewModel(
         ITabularDataSourceFactory sourceFactory,
@@ -44,7 +50,7 @@ public partial class MainWindowViewModel : ViewModelBase
         LeftSource.PropertyChanged += OnSourcePropertyChanged;
         RightSource.PropertyChanged += OnSourcePropertyChanged;
 
-        AvailableSourceTypes = Enum.GetValues<SourceType>();
+        AvailableSourceTypes = SourceTypeOptionViewModel.All;
         AvailableRowVisibilityOptions =
         [
             new RowVisibilityOptionViewModel { Mode = RowVisibilityMode.All, Label = "All rows" },
@@ -61,6 +67,10 @@ public partial class MainWindowViewModel : ViewModelBase
 
         SetupLeftSourceCommand = new AsyncRelayCommand(() => SetupSourceAsync(LeftSource), () => !IsBusy);
         SetupRightSourceCommand = new AsyncRelayCommand(() => SetupSourceAsync(RightSource), () => !IsBusy);
+        ConfigureLeftSourceCommand = new RelayCommand(() => ConfigureSource(LeftSource), () => !IsBusy && LeftSource.HasLocation);
+        ConfigureRightSourceCommand = new RelayCommand(() => ConfigureSource(RightSource), () => !IsBusy && RightSource.HasLocation);
+        DelimitedTextConfigOkCommand = new AsyncRelayCommand(DelimitedTextConfigOkAsync, () => !IsBusy && IsDelimitedTextConfigValid);
+        DelimitedTextConfigCancelCommand = new RelayCommand(CancelDelimitedTextConfig);
         ReloadCommand = new AsyncRelayCommand(ReloadAsync, () => !IsBusy);
         CancelCommand = new RelayCommand(CancelCurrentOperation, () => IsBusy);
         ClosePivotViewCommand = new RelayCommand(ClosePivotView);
@@ -80,7 +90,11 @@ public partial class MainWindowViewModel : ViewModelBase
 
     public SourcePaneViewModel RightSource { get; }
 
-    public IReadOnlyList<SourceType> AvailableSourceTypes { get; }
+    public IReadOnlyList<SourceTypeOptionViewModel> AvailableSourceTypes { get; }
+
+    public IReadOnlyList<DelimiterPresetOptionViewModel> AvailableDelimiterPresets => DelimiterPresetOptionViewModel.All;
+
+    public IReadOnlyList<QuotePresetOptionViewModel> AvailableQuotePresets => QuotePresetOptionViewModel.All;
 
     public IReadOnlyList<RowVisibilityOptionViewModel> AvailableRowVisibilityOptions { get; }
 
@@ -106,9 +120,19 @@ public partial class MainWindowViewModel : ViewModelBase
 
     public ObservableCollection<SearchColumnFilterViewModel> SearchColumnFilters { get; } = [];
 
+    public BulkObservableCollection<string> DelimitedTextPreviewLines { get; } = [];
+
     public IAsyncRelayCommand SetupLeftSourceCommand { get; }
 
     public IAsyncRelayCommand SetupRightSourceCommand { get; }
+
+    public IRelayCommand ConfigureLeftSourceCommand { get; }
+
+    public IRelayCommand ConfigureRightSourceCommand { get; }
+
+    public IAsyncRelayCommand DelimitedTextConfigOkCommand { get; }
+
+    public IRelayCommand DelimitedTextConfigCancelCommand { get; }
 
     public IAsyncRelayCommand ReloadCommand { get; }
 
@@ -177,7 +201,36 @@ public partial class MainWindowViewModel : ViewModelBase
     [ObservableProperty]
     private bool _isConfirmingDiscardColumnSettings;
 
-    public bool IsAnyOverlayOpen => IsPivotOpen || IsColumnSettingsOpen;
+    [ObservableProperty]
+    private bool _isDelimitedTextConfigOpen;
+
+    [ObservableProperty]
+    private string _delimitedTextConfigTitle = string.Empty;
+
+    [ObservableProperty]
+    private DelimiterPresetOptionViewModel? _selectedDelimiterPreset;
+
+    [ObservableProperty]
+    private string _customDelimiterText = string.Empty;
+
+    [ObservableProperty]
+    private QuotePresetOptionViewModel? _selectedQuotePreset;
+
+    [ObservableProperty]
+    private string _customQuoteText = string.Empty;
+
+    [ObservableProperty]
+    private string? _delimitedTextConfigErrorText;
+
+    public bool IsAnyOverlayOpen => IsPivotOpen || IsColumnSettingsOpen || IsDelimitedTextConfigOpen;
+
+    public bool IsCustomDelimiterVisible => SelectedDelimiterPreset?.Kind == DelimiterPresetKind.Other;
+
+    public bool IsCustomQuoteVisible => SelectedQuotePreset?.Kind == QuotePresetKind.Other;
+
+    public bool HasDelimitedTextConfigError => !string.IsNullOrEmpty(DelimitedTextConfigErrorText);
+
+    private bool IsDelimitedTextConfigValid => TryBuildEffectiveDelimitedTextSettings(out _, out _, out _);
 
     public bool HasKeyColumnSelected => ColumnOptions.Any(x => x.Role == ColumnRole.Key);
 
@@ -368,10 +421,49 @@ public partial class MainWindowViewModel : ViewModelBase
         OnPropertyChanged(nameof(IsAnyOverlayOpen));
     }
 
+    partial void OnIsDelimitedTextConfigOpenChanged(bool value)
+    {
+        OnPropertyChanged(nameof(IsAnyOverlayOpen));
+    }
+
+    partial void OnSelectedDelimiterPresetChanged(DelimiterPresetOptionViewModel? value)
+    {
+        OnPropertyChanged(nameof(IsCustomDelimiterVisible));
+        RefreshDelimitedTextPreview();
+        DelimitedTextConfigOkCommand.NotifyCanExecuteChanged();
+    }
+
+    partial void OnCustomDelimiterTextChanged(string value)
+    {
+        RefreshDelimitedTextPreview();
+        DelimitedTextConfigOkCommand.NotifyCanExecuteChanged();
+    }
+
+    partial void OnSelectedQuotePresetChanged(QuotePresetOptionViewModel? value)
+    {
+        OnPropertyChanged(nameof(IsCustomQuoteVisible));
+        RefreshDelimitedTextPreview();
+        DelimitedTextConfigOkCommand.NotifyCanExecuteChanged();
+    }
+
+    partial void OnCustomQuoteTextChanged(string value)
+    {
+        RefreshDelimitedTextPreview();
+        DelimitedTextConfigOkCommand.NotifyCanExecuteChanged();
+    }
+
+    partial void OnDelimitedTextConfigErrorTextChanged(string? value)
+    {
+        OnPropertyChanged(nameof(HasDelimitedTextConfigError));
+    }
+
     partial void OnIsBusyChanged(bool value)
     {
         SetupLeftSourceCommand.NotifyCanExecuteChanged();
         SetupRightSourceCommand.NotifyCanExecuteChanged();
+        ConfigureLeftSourceCommand.NotifyCanExecuteChanged();
+        ConfigureRightSourceCommand.NotifyCanExecuteChanged();
+        DelimitedTextConfigOkCommand.NotifyCanExecuteChanged();
         ReloadCommand.NotifyCanExecuteChanged();
         CancelCommand.NotifyCanExecuteChanged();
         ColumnSettingsOkCommand.NotifyCanExecuteChanged();
@@ -384,11 +476,23 @@ public partial class MainWindowViewModel : ViewModelBase
             OnPropertyChanged(nameof(LeftGridSummary));
             OnPropertyChanged(nameof(RightGridSummary));
         }
+
+        if (e.PropertyName == nameof(SourcePaneViewModel.Location))
+        {
+            if (ReferenceEquals(sender, LeftSource))
+            {
+                ConfigureLeftSourceCommand.NotifyCanExecuteChanged();
+            }
+            else if (ReferenceEquals(sender, RightSource))
+            {
+                ConfigureRightSourceCommand.NotifyCanExecuteChanged();
+            }
+        }
     }
 
     private async Task SetupSourceAsync(SourcePaneViewModel source)
     {
-        var path = await _filePickerService.PickExcelFileAsync(CancellationToken.None);
+        var path = await _filePickerService.PickFileAsync(source.SelectedSourceType, CancellationToken.None);
         if (string.IsNullOrWhiteSpace(path))
         {
             return;
@@ -424,7 +528,9 @@ public partial class MainWindowViewModel : ViewModelBase
                 SourceType = LeftSource.SelectedSourceType,
                 SupportsHeaderOption = LeftSource.SupportsHeaderOption,
                 TreatFirstRowAsHeader = LeftSource.TreatFirstRowAsHeader,
-                Location = LeftSource.Location
+                Location = LeftSource.Location,
+                Delimiter = LeftSource.DelimiterCharacter,
+                QuoteCharacter = LeftSource.QuoteCharacter
             }, cts.Token);
 
             var rightLoadTask = rightProvider.LoadAsync(new SourceConfiguration
@@ -432,7 +538,9 @@ public partial class MainWindowViewModel : ViewModelBase
                 SourceType = RightSource.SelectedSourceType,
                 SupportsHeaderOption = RightSource.SupportsHeaderOption,
                 TreatFirstRowAsHeader = RightSource.TreatFirstRowAsHeader,
-                Location = RightSource.Location
+                Location = RightSource.Location,
+                Delimiter = RightSource.DelimiterCharacter,
+                QuoteCharacter = RightSource.QuoteCharacter
             }, cts.Token);
 
             await Task.WhenAll(leftLoadTask, rightLoadTask);
@@ -1275,6 +1383,190 @@ public partial class MainWindowViewModel : ViewModelBase
         }
 
         return map;
+    }
+
+    public void ConfigureSource(SourcePaneViewModel source)
+    {
+        if (IsPivotOpen)
+        {
+            ClosePivotView();
+        }
+
+        if (IsColumnSettingsOpen)
+        {
+            CloseColumnSettingsWithoutSaving();
+        }
+
+        _configuringSource = source;
+        DelimitedTextConfigTitle = $"Configure {source.Title} Delimited Text Source";
+        DelimitedTextConfigErrorText = null;
+
+        SelectedDelimiterPreset = DelimiterPresetOptionViewModel.FromChar(source.DelimiterCharacter) ?? DelimiterPresetOptionViewModel.Other;
+        CustomDelimiterText = SelectedDelimiterPreset.Kind == DelimiterPresetKind.Other ? source.DelimiterCharacter.ToString() : string.Empty;
+
+        SelectedQuotePreset = QuotePresetOptionViewModel.FromChar(source.QuoteCharacter) ?? QuotePresetOptionViewModel.Other;
+        CustomQuoteText = SelectedQuotePreset.Kind == QuotePresetKind.Other && source.QuoteCharacter is { } q ? q.ToString() : string.Empty;
+
+        LoadDelimitedTextPreviewSample(source.Location);
+        RefreshDelimitedTextPreview();
+
+        IsDelimitedTextConfigOpen = true;
+    }
+
+    private async Task DelimitedTextConfigOkAsync()
+    {
+        if (_configuringSource is null)
+        {
+            return;
+        }
+
+        if (!TryBuildEffectiveDelimitedTextSettings(out var delimiter, out var quote, out var error))
+        {
+            DelimitedTextConfigErrorText = error;
+            return;
+        }
+
+        _configuringSource.DelimiterCharacter = delimiter;
+        _configuringSource.QuoteCharacter = quote;
+
+        CloseDelimitedTextConfig();
+
+        if (!string.IsNullOrWhiteSpace(LeftSource.Location) && !string.IsNullOrWhiteSpace(RightSource.Location))
+        {
+            await ReloadAsync();
+        }
+    }
+
+    private void CancelDelimitedTextConfig()
+    {
+        CloseDelimitedTextConfig();
+    }
+
+    private void CloseDelimitedTextConfig()
+    {
+        _configuringSource = null;
+        _delimitedTextPreviewSample = null;
+        IsDelimitedTextConfigOpen = false;
+        DelimitedTextConfigErrorText = null;
+        DelimitedTextPreviewLines.ReplaceAll([]);
+    }
+
+    private bool TryBuildEffectiveDelimitedTextSettings(out char delimiter, out char? quote, out string? error)
+    {
+        delimiter = ',';
+        quote = null;
+        error = null;
+
+        if (SelectedDelimiterPreset is null)
+        {
+            error = "Select a delimiter.";
+            return false;
+        }
+
+        if (SelectedDelimiterPreset.Kind == DelimiterPresetKind.Other)
+        {
+            if (CustomDelimiterText.Length != 1)
+            {
+                error = "Enter exactly one custom delimiter character.";
+                return false;
+            }
+
+            delimiter = CustomDelimiterText[0];
+        }
+        else
+        {
+            delimiter = SelectedDelimiterPreset.FixedValue!.Value;
+        }
+
+        if (SelectedQuotePreset is null)
+        {
+            error = "Select a quote character option.";
+            return false;
+        }
+
+        switch (SelectedQuotePreset.Kind)
+        {
+            case QuotePresetKind.None:
+                quote = null;
+                break;
+
+            case QuotePresetKind.Other:
+                if (CustomQuoteText.Length != 1)
+                {
+                    error = "Enter exactly one custom quote character.";
+                    return false;
+                }
+
+                quote = CustomQuoteText[0];
+                break;
+
+            default:
+                quote = SelectedQuotePreset.FixedValue;
+                break;
+        }
+
+        if (quote is { } q && q == delimiter)
+        {
+            error = "Quote character and delimiter must be different.";
+            return false;
+        }
+
+        return true;
+    }
+
+    private void LoadDelimitedTextPreviewSample(string? path)
+    {
+        _delimitedTextPreviewSample = null;
+
+        if (string.IsNullOrWhiteSpace(path))
+        {
+            return;
+        }
+
+        try
+        {
+            using var stream = File.Open(path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite);
+            using var reader = new StreamReader(stream);
+            var buffer = new char[PreviewSampleCharBudget];
+            var read = reader.Read(buffer, 0, buffer.Length);
+            _delimitedTextPreviewSample = new string(buffer, 0, read);
+        }
+        catch (IOException)
+        {
+        }
+        catch (UnauthorizedAccessException)
+        {
+        }
+    }
+
+    private void RefreshDelimitedTextPreview()
+    {
+        if (!TryBuildEffectiveDelimitedTextSettings(out var delimiter, out var quote, out var error))
+        {
+            DelimitedTextConfigErrorText = error;
+            DelimitedTextPreviewLines.ReplaceAll([]);
+            return;
+        }
+
+        if (_delimitedTextPreviewSample is null)
+        {
+            DelimitedTextConfigErrorText = "No preview available.";
+            DelimitedTextPreviewLines.ReplaceAll([]);
+            return;
+        }
+
+        try
+        {
+            using var textReader = new StringReader(_delimitedTextPreviewSample);
+            var dataSet = DelimitedTextTabularDataSource.ReadAll(textReader, delimiter, quote, treatFirstRowAsHeader: false, PreviewRowCap, CancellationToken.None);
+            DelimitedTextConfigErrorText = null;
+            DelimitedTextPreviewLines.ReplaceAll(dataSet.Rows.Select(row => string.Join("  |  ", row.Select(v => v ?? string.Empty))));
+        }
+        catch (Exception ex)
+        {
+            DelimitedTextConfigErrorText = $"Preview error: {ex.Message}";
+            DelimitedTextPreviewLines.ReplaceAll([]);
+        }
     }
 
     // Disabled along with the main-screen "Column Options" editor. Kept for potential reuse later.
