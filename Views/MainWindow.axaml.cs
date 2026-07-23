@@ -111,7 +111,11 @@ public partial class MainWindow : Window
 		// Posted at Background priority so this runs after the search row's IsVisible="{Binding
 		// IsSearchMode}" binding has actually applied and laid out - focusing too early (same
 		// frame) would target a control that isn't visible/focusable yet.
-		Dispatcher.UIThread.Post(() => SearchTextBox.Focus(), DispatcherPriority.Background);
+		Dispatcher.UIThread.Post(() =>
+		{
+			SearchTextBox.Focus();
+			SearchTextBox.SelectAll();
+		}, DispatcherPriority.Background);
 	}
 
 	private void OnDisplayColumnsChanged(object? sender, NotifyCollectionChangedEventArgs e)
@@ -596,12 +600,12 @@ public partial class MainWindow : Window
 				e.Handled = true;
 				break;
 
-			case Key.Up when e.Source is not TextBox && _viewModel.PivotPreviousRowCommand.CanExecute(null):
+			case Key.Up when _viewModel.PivotPreviousRowCommand.CanExecute(null):
 				_viewModel.PivotPreviousRowCommand.Execute(null);
 				e.Handled = true;
 				break;
 
-			case Key.Down when e.Source is not TextBox && _viewModel.PivotNextRowCommand.CanExecute(null):
+			case Key.Down when _viewModel.PivotNextRowCommand.CanExecute(null):
 				_viewModel.PivotNextRowCommand.Execute(null);
 				e.Handled = true;
 				break;
