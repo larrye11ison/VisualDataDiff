@@ -21,36 +21,38 @@ public sealed class DataDiffEngine : IDataDiffEngine
 		IReadOnlyList<ColumnComparisonRule> columnRules,
 		CancellationToken cancellationToken)
 	{
-		var maxColumns = Math.Max(left.Columns.Count, right.Columns.Count);
-		var rulesByOrdinal = columnRules.ToDictionary(x => x.Ordinal);
-
-		var columns = new List<DiffColumn>(maxColumns);
-		for (var i = 0; i < maxColumns; i++)
+		var columns = new List<DiffColumn>(columnRules.Count);
+		for (var slot = 0; slot < columnRules.Count; slot++)
 		{
-			var name = i < left.Columns.Count
-				? left.Columns[i].Name
-				: i < right.Columns.Count
-					? right.Columns[i].Name
-					: ExcelColumnNameHelper.ToColumnName(i);
+			var rule = columnRules[slot];
+			var name = rule.LeftOrdinal is int lo && lo >= 0 && lo < left.Columns.Count
+				? left.Columns[lo].Name
+				: rule.RightOrdinal is int ro && ro >= 0 && ro < right.Columns.Count
+					? right.Columns[ro].Name
+					: ExcelColumnNameHelper.ToColumnName(slot);
 
 			columns.Add(new DiffColumn
 			{
-				Ordinal = i,
+				Ordinal = slot,
 				Name = name,
 				HasDifferences = false
 			});
 		}
 
-		var keyOrdinals = rulesByOrdinal.Values
-			.Where(x => x.Role == ColumnRole.Key)
-			.Select(x => x.Ordinal)
-			.Where(x => x >= 0 && x < maxColumns)
-			.Distinct()
-			.OrderBy(x => x)
+		// A Key column must be mapped on both sides to be usable for matching rows at all - a column
+		// that only exists on one side can't pair rows between the two datasets. The UI is responsible
+		// for not letting the user mark a one-sided column as Key; this filter is just a defensive
+		// backstop so a stray unmapped Key rule is silently excluded from row-matching rather than
+		// throwing on the forced-unwrap of a null ordinal.
+		var keyRules = columnRules
+			.Where(x => x.Role == ColumnRole.Key && x.LeftOrdinal is not null && x.RightOrdinal is not null)
 			.ToArray();
 
-		var leftMap = BuildKeyMap(left, keyOrdinals, rulesByOrdinal, cancellationToken);
-		var rightMap = BuildKeyMap(right, keyOrdinals, rulesByOrdinal, cancellationToken);
+		var leftKeyOrdinals = keyRules.Select(x => x.LeftOrdinal!.Value).ToArray();
+		var rightKeyOrdinals = keyRules.Select(x => x.RightOrdinal!.Value).ToArray();
+
+		var leftMap = BuildKeyMap(left, leftKeyOrdinals, keyRules, cancellationToken);
+		var rightMap = BuildKeyMap(right, rightKeyOrdinals, keyRules, cancellationToken);
 
 		var orderedKeys = leftMap.Keys.Union(rightMap.Keys).OrderBy(x => x, StringComparer.Ordinal).ToArray();
 		var rows = new List<DiffRow>();
@@ -69,19 +71,19 @@ public sealed class DataDiffEngine : IDataDiffEngine
 			{
 				var leftIndex = leftIndices.Dequeue();
 				var rightIndex = rightIndices.Dequeue();
-				rows.Add(BuildRow(left, right, leftIndex, rightIndex, maxColumns, rulesByOrdinal, columns));
+				rows.Add(BuildRow(left, right, leftIndex, rightIndex, columnRules, columns));
 			}
 
 			while (leftIndices.Count > 0)
 			{
 				var leftIndex = leftIndices.Dequeue();
-				rows.Add(BuildRow(left, right, leftIndex, null, maxColumns, rulesByOrdinal, columns));
+				rows.Add(BuildRow(left, right, leftIndex, null, columnRules, columns));
 			}
 
 			while (rightIndices.Count > 0)
 			{
 				var rightIndex = rightIndices.Dequeue();
-				rows.Add(BuildRow(left, right, null, rightIndex, maxColumns, rulesByOrdinal, columns));
+				rows.Add(BuildRow(left, right, null, rightIndex, columnRules, columns));
 			}
 		}
 
@@ -94,8 +96,8 @@ public sealed class DataDiffEngine : IDataDiffEngine
 
 	private static Dictionary<string, Queue<int>> BuildKeyMap(
 		TabularDataSet dataSet,
-		IReadOnlyList<int> keyOrdinals,
-		IReadOnlyDictionary<int, ColumnComparisonRule> rulesByOrdinal,
+		IReadOnlyList<int> keyOrdinalsForThisSide,
+		IReadOnlyList<ColumnComparisonRule> keyRules,
 		CancellationToken cancellationToken)
 	{
 		var map = new Dictionary<string, Queue<int>>(StringComparer.Ordinal);
@@ -104,9 +106,9 @@ public sealed class DataDiffEngine : IDataDiffEngine
 		{
 			cancellationToken.ThrowIfCancellationRequested();
 
-			var key = keyOrdinals.Count == 0
+			var key = keyOrdinalsForThisSide.Count == 0
 				? $"__row_{i}"
-				: BuildKey(dataSet.Rows[i], keyOrdinals, rulesByOrdinal);
+				: BuildKey(dataSet.Rows[i], keyOrdinalsForThisSide, keyRules);
 
 			if (!map.TryGetValue(key, out var queue))
 			{
@@ -125,30 +127,28 @@ public sealed class DataDiffEngine : IDataDiffEngine
 		TabularDataSet right,
 		int? leftIndex,
 		int? rightIndex,
-		int maxColumns,
-		IReadOnlyDictionary<int, ColumnComparisonRule> rulesByOrdinal,
+		IReadOnlyList<ColumnComparisonRule> columnRules,
 		IReadOnlyList<DiffColumn> columns)
 	{
-		var cells = new List<DiffCell>(maxColumns);
+		var cells = new List<DiffCell>(columnRules.Count);
 		var hasDifferences = leftIndex is null || rightIndex is null;
 
-		for (var i = 0; i < maxColumns; i++)
+		for (var slot = 0; slot < columnRules.Count; slot++)
 		{
-			var leftValue = GetCell(left, leftIndex, i);
-			var rightValue = GetCell(right, rightIndex, i);
-			rulesByOrdinal.TryGetValue(i, out var rule);
+			var rule = columnRules[slot];
+			var leftValue = rule.LeftOrdinal is int lo ? GetCell(left, leftIndex, lo) : null;
+			var rightValue = rule.RightOrdinal is int ro ? GetCell(right, rightIndex, ro) : null;
 
-			var compareRule = rule ?? new ColumnComparisonRule { Ordinal = i };
-			var isDifferent = compareRule.Role != ColumnRole.Ignored && IsDifferent(leftValue, rightValue, compareRule);
+			var isDifferent = rule.Role != ColumnRole.Ignored && IsDifferent(leftValue, rightValue, rule);
 			if (isDifferent)
 			{
 				hasDifferences = true;
-				columns[i].HasDifferences = true;
+				columns[slot].HasDifferences = true;
 			}
 
 			cells.Add(new DiffCell
 			{
-				Ordinal = i,
+				Ordinal = slot,
 				LeftValue = leftValue,
 				RightValue = rightValue,
 				IsDifferent = isDifferent
@@ -168,10 +168,12 @@ public sealed class DataDiffEngine : IDataDiffEngine
 
 	private static string BuildKey(
 		IReadOnlyList<string?> row,
-		IReadOnlyList<int> keyOrdinals,
-		IReadOnlyDictionary<int, ColumnComparisonRule> rulesByOrdinal)
+		IReadOnlyList<int> keyOrdinalsForThisSide,
+		IReadOnlyList<ColumnComparisonRule> keyRules)
 	{
-		return string.Join("\u001f", keyOrdinals.Select(x => Normalize(GetValue(row, x), rulesByOrdinal.GetValueOrDefault(x))));
+		return string.Join(
+			"",
+			keyOrdinalsForThisSide.Select((ordinal, index) => Normalize(GetValue(row, ordinal), keyRules[index])));
 	}
 
 	private static string? GetCell(TabularDataSet dataSet, int? rowIndex, int ordinal)

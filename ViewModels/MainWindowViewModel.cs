@@ -627,15 +627,19 @@ public partial class MainWindowViewModel : ViewModelBase
 
     private IReadOnlyList<ColumnComparisonRule> BuildRules()
     {
+        // Phase 1 of column remapping: ColumnOptionsViewModel is still one-row-per-shared-ordinal
+        // (LeftOrdinal == RightOrdinal == x.Ordinal), so behavior is unchanged from before the
+        // ColumnComparisonRule split. Real (possibly non-1:1) mappings land in a later phase.
         return ColumnOptions
             .Select(x => new ColumnComparisonRule
             {
-                Ordinal = x.Ordinal,
+                LeftOrdinal = x.Ordinal,
+                RightOrdinal = x.Ordinal,
                 Role = x.Role,
                 CaseSensitive = x.CaseSensitive,
                 IgnoreLeadingAndTrailingWhitespace = x.IgnoreLeadingAndTrailingWhitespace
             })
-            .OrderBy(x => x.Ordinal)
+            .OrderBy(x => x.LeftOrdinal)
             .ToArray();
     }
 
