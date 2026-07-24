@@ -6,26 +6,59 @@ namespace VisualDataDiff.ViewModels;
 
 public sealed partial class ColumnOptionsViewModel : ObservableObject
 {
-	public ColumnOptionsViewModel(int ordinal, string? leftName, string? rightName)
+	public ColumnOptionsViewModel(
+		int slotIndex,
+		int? leftOrdinal,
+		string? leftName,
+		int? rightOrdinal,
+		string? rightName,
+		int? score,
+		bool isAmbiguous)
 	{
-		Ordinal = ordinal;
+		SlotIndex = slotIndex;
+		LeftOrdinal = leftOrdinal;
 		LeftName = leftName;
+		RightOrdinal = rightOrdinal;
 		RightName = rightName;
+		Score = score;
+		IsAmbiguous = isAmbiguous;
 	}
 
-	public int Ordinal { get; }
+	public int SlotIndex { get; }
+
+	public int? LeftOrdinal { get; }
 
 	public string? LeftName { get; }
 
+	public int? RightOrdinal { get; }
+
 	public string? RightName { get; }
 
-	public string LeftDisplayName => LeftName ?? "(not present)";
+	public int? Score { get; }
 
-	public string RightDisplayName => RightName ?? "(not present)";
+	public bool IsAmbiguous { get; }
 
-	public string Name => LeftName ?? RightName ?? ExcelColumnNameHelper.ToColumnName(Ordinal);
+	public bool IsUnmapped => LeftOrdinal is null || RightOrdinal is null;
 
-	public bool HasNameMismatch => !HeaderNameComparer.AreEquivalent(LeftName, RightName);
+	public string LeftDisplayName => LeftName ?? "(unmapped)";
+
+	public string RightDisplayName => RightName ?? "(unmapped)";
+
+	public string Name => LeftName ?? RightName ?? ExcelColumnNameHelper.ToColumnName(SlotIndex);
+
+	// Only a real mismatch when both sides are actually mapped - a one-sided column isn't "mismatched
+	// names," it just doesn't have a counterpart, which IsUnmapped already communicates on its own.
+	public bool HasNameMismatch => LeftOrdinal is not null && RightOrdinal is not null && !HeaderNameComparer.AreEquivalent(LeftName, RightName);
+
+	public string MatchStatusLabel => (IsUnmapped, IsAmbiguous, Score) switch
+	{
+		(true, _, _) => LeftOrdinal is null ? "Unmapped (Right only)" : "Unmapped (Left only)",
+		(false, true, int s) => $"Needs review ({s}%)",
+		(false, true, null) => "Needs review",
+		(false, false, 100) => "Exact match",
+		(false, false, int s) => $"Match ({s}%)",
+		_ => string.Empty
+	};
 
 	public IReadOnlyList<ColumnRole> AvailableRoles { get; } = Enum.GetValues<ColumnRole>();
 

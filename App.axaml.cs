@@ -22,10 +22,11 @@ public partial class App : Application
             var sourceFactory = new TabularDataSourceFactory();
             var diffEngine = new DataDiffEngine();
             var searchEngine = new SearchEngine();
+            var columnMatcher = new ColumnMatcher();
             Window? mainWindow = null;
             var filePickerService = new AvaloniaFilePickerService(() => mainWindow);
 
-            var viewModel = new MainWindowViewModel(sourceFactory, diffEngine, filePickerService, searchEngine);
+            var viewModel = new MainWindowViewModel(sourceFactory, diffEngine, filePickerService, searchEngine, columnMatcher);
             mainWindow = new MainWindow
             {
                 DataContext = viewModel
