@@ -288,6 +288,14 @@
                                Foreground="#FFE0A15B"
                                FontWeight="SemiBold"
                                IsVisible="{Binding !HasKeyColumnSelected}"/>
+                    <TextBlock Text="Two rows reference the same source column - fix the duplicate before continuing."
+                               Foreground="#FFD9603C"
+                               FontWeight="SemiBold"
+                               IsVisible="{Binding HasDuplicateColumnClaims}"/>
+                    <TextBlock Text="The Key column must be mapped on both sides."
+                               Foreground="#FFD9603C"
+                               FontWeight="SemiBold"
+                               IsVisible="{Binding HasUnmappedKeyColumn}"/>
                     <StackPanel Orientation="Horizontal" Spacing="12">
                         <TextBlock Text="{Binding MatchedColumnCount, StringFormat='{}{0} matched'}" Opacity="0.8"/>
                         <TextBlock Text="{Binding NeedsReviewColumnCount, StringFormat='{}{0} need review'}" Foreground="#FFE0A15B"/>
@@ -315,11 +323,11 @@
                                     <ComboBox Grid.Column="1" ItemsSource="{Binding AvailableRoles}" SelectedItem="{Binding Role}"/>
                                     <CheckBox Grid.Column="2" IsChecked="{Binding CaseSensitive}" HorizontalAlignment="Center" VerticalAlignment="Center"/>
                                     <CheckBox Grid.Column="3" IsChecked="{Binding IgnoreLeadingAndTrailingWhitespace}" HorizontalAlignment="Center" VerticalAlignment="Center"/>
-                                    <Border Grid.Column="4" Padding="4,2" CornerRadius="3" Classes.nameMismatch="{Binding HasNameMismatch}">
-                                        <TextBlock Text="{Binding LeftDisplayName}" TextTrimming="CharacterEllipsis"/>
+                                    <Border Grid.Column="4" Padding="2" CornerRadius="3" Classes.nameMismatch="{Binding HasNameMismatch}">
+                                        <ComboBox ItemsSource="{Binding LeftOptions}" SelectedItem="{Binding SelectedLeftOption}" HorizontalAlignment="Stretch"/>
                                     </Border>
-                                    <Border Grid.Column="5" Padding="4,2" CornerRadius="3" Classes.nameMismatch="{Binding HasNameMismatch}">
-                                        <TextBlock Text="{Binding RightDisplayName}" TextTrimming="CharacterEllipsis"/>
+                                    <Border Grid.Column="5" Padding="2" CornerRadius="3" Classes.nameMismatch="{Binding HasNameMismatch}">
+                                        <ComboBox ItemsSource="{Binding RightOptions}" SelectedItem="{Binding SelectedRightOption}" HorizontalAlignment="Stretch"/>
                                     </Border>
                                     <Border Grid.Column="6" Padding="4,2" CornerRadius="3" Classes.matchAmbiguous="{Binding IsAmbiguous}" Classes.matchUnmapped="{Binding IsUnmapped}">
                                         <TextBlock Text="{Binding MatchStatusLabel}" TextTrimming="CharacterEllipsis"/>

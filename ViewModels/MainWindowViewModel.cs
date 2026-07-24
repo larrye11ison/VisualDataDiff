@@ -81,7 +81,7 @@ public partial class MainWindowViewModel : ViewModelBase
         PivotNextRowCommand = new RelayCommand(() => NavigatePivotRow(1), () => CanNavigatePivotRow(1));
         OpenSearchCommand = new RelayCommand(OpenSearch);
         OpenColumnSettingsCommand = new RelayCommand(OpenColumnSettings);
-        ColumnSettingsOkCommand = new AsyncRelayCommand(ColumnSettingsOkAsync, () => !IsBusy);
+        ColumnSettingsOkCommand = new AsyncRelayCommand(ColumnSettingsOkAsync, () => !IsBusy && !HasColumnMappingConflicts);
         ColumnSettingsCancelCommand = new RelayCommand(CancelColumnSettings);
         DiscardColumnSettingsChangesCommand = new RelayCommand(DiscardColumnSettingsChanges);
         KeepEditingColumnSettingsCommand = new RelayCommand(KeepEditingColumnSettings);
@@ -244,6 +244,20 @@ public partial class MainWindowViewModel : ViewModelBase
     public int UnmappedLeftColumnCount => ColumnOptions.Count(x => x.IsUnmapped && x.LeftOrdinal is not null);
 
     public int UnmappedRightColumnCount => ColumnOptions.Count(x => x.IsUnmapped && x.RightOrdinal is not null);
+
+    // Two rows pointing at the same source column is only possible now that mapping is user-editable
+    // (Phase 3) - the auto-matcher itself never produces this. Checked at OK time rather than
+    // prevented live in the pickers, to avoid cross-row-aware live filtering.
+    public bool HasDuplicateColumnClaims =>
+        ColumnOptions.Where(x => x.LeftOrdinal is not null).GroupBy(x => x.LeftOrdinal).Any(g => g.Count() > 1)
+        || ColumnOptions.Where(x => x.RightOrdinal is not null).GroupBy(x => x.RightOrdinal).Any(g => g.Count() > 1);
+
+    // A Key column has to exist on both sides to be usable for row-matching at all (see
+    // DataDiffEngine.CompareCore, which silently drops one-sided Key rules from the key set) - block
+    // OK rather than let the user discover this only after the comparison quietly ignores their key.
+    public bool HasUnmappedKeyColumn => ColumnOptions.Any(x => x.Role == ColumnRole.Key && x.IsUnmapped);
+
+    public bool HasColumnMappingConflicts => HasDuplicateColumnClaims || HasUnmappedKeyColumn;
 
     public string PivotSubtitle => _pivotedSourceRow switch
     {
@@ -723,7 +737,7 @@ public partial class MainWindowViewModel : ViewModelBase
             var leftName = match.LeftOrdinal is int lo ? leftDataSet.Columns[lo].Name : null;
             var rightName = match.RightOrdinal is int ro ? rightDataSet.Columns[ro].Name : null;
 
-            var vm = new ColumnOptionsViewModel(slot, match.LeftOrdinal, leftName, match.RightOrdinal, rightName, match.Score, match.IsAmbiguous);
+            var vm = new ColumnOptionsViewModel(slot, leftDataSet.Columns, rightDataSet.Columns, match.LeftOrdinal, match.RightOrdinal, match.Score, match.IsAmbiguous);
 
             var lookupName = HeaderNameComparer.Normalize(leftName ?? rightName ?? string.Empty);
             if (!string.IsNullOrEmpty(lookupName) && existingByName.TryGetValue(lookupName, out var previous))
@@ -762,6 +776,10 @@ public partial class MainWindowViewModel : ViewModelBase
         OnPropertyChanged(nameof(NeedsReviewColumnCount));
         OnPropertyChanged(nameof(UnmappedLeftColumnCount));
         OnPropertyChanged(nameof(UnmappedRightColumnCount));
+        OnPropertyChanged(nameof(HasDuplicateColumnClaims));
+        OnPropertyChanged(nameof(HasUnmappedKeyColumn));
+        OnPropertyChanged(nameof(HasColumnMappingConflicts));
+        ColumnSettingsOkCommand.NotifyCanExecuteChanged();
     }
 
     private void OnColumnOptionsPropertyChanged(object? sender, PropertyChangedEventArgs e)
@@ -776,7 +794,12 @@ public partial class MainWindowViewModel : ViewModelBase
             OnPropertyChanged(nameof(HasKeyColumnSelected));
         }
 
-        if (e.PropertyName is nameof(ColumnOptionsViewModel.CaseSensitive) or nameof(ColumnOptionsViewModel.IgnoreLeadingAndTrailingWhitespace) or nameof(ColumnOptionsViewModel.Role))
+        if (e.PropertyName is nameof(ColumnOptionsViewModel.LeftOrdinal) or nameof(ColumnOptionsViewModel.RightOrdinal) or nameof(ColumnOptionsViewModel.Role))
+        {
+            NotifyColumnMatchSummaryChanged();
+        }
+
+        if (e.PropertyName is nameof(ColumnOptionsViewModel.CaseSensitive) or nameof(ColumnOptionsViewModel.IgnoreLeadingAndTrailingWhitespace) or nameof(ColumnOptionsViewModel.Role) or nameof(ColumnOptionsViewModel.LeftOrdinal) or nameof(ColumnOptionsViewModel.RightOrdinal))
         {
             StatusText = "Column options changed. Run comparison to refresh results.";
             // Disabled along with the main-screen "Column Options" editor.
@@ -960,7 +983,9 @@ public partial class MainWindowViewModel : ViewModelBase
         }
 
         _columnSettingsSnapshot = ColumnOptions
-            .Select(x => new ColumnSettingsSnapshotEntry(x.SlotIndex, x.Role, x.CaseSensitive, x.IgnoreLeadingAndTrailingWhitespace))
+            .Select(x => new ColumnSettingsSnapshotEntry(
+                x.SlotIndex, x.LeftOrdinal, x.RightOrdinal, x.Score, x.IsAmbiguous, x.IsManuallyMapped,
+                x.Role, x.CaseSensitive, x.IgnoreLeadingAndTrailingWhitespace))
             .ToArray();
         IsConfirmingDiscardColumnSettings = false;
         IsColumnSettingsOpen = true;
@@ -1027,6 +1052,8 @@ public partial class MainWindowViewModel : ViewModelBase
         {
             var current = ColumnOptions.FirstOrDefault(x => x.SlotIndex == entry.SlotIndex);
             if (current is null
+                || current.LeftOrdinal != entry.LeftOrdinal
+                || current.RightOrdinal != entry.RightOrdinal
                 || current.Role != entry.Role
                 || current.CaseSensitive != entry.CaseSensitive
                 || current.IgnoreLeadingAndTrailingWhitespace != entry.IgnoreLeadingAndTrailingWhitespace)
@@ -1053,13 +1080,23 @@ public partial class MainWindowViewModel : ViewModelBase
                 continue;
             }
 
+            current.RestoreMapping(entry.LeftOrdinal, entry.RightOrdinal, entry.Score, entry.IsAmbiguous, entry.IsManuallyMapped);
             current.Role = entry.Role;
             current.CaseSensitive = entry.CaseSensitive;
             current.IgnoreLeadingAndTrailingWhitespace = entry.IgnoreLeadingAndTrailingWhitespace;
         }
     }
 
-    private readonly record struct ColumnSettingsSnapshotEntry(int SlotIndex, ColumnRole Role, bool CaseSensitive, bool IgnoreLeadingAndTrailingWhitespace);
+    private readonly record struct ColumnSettingsSnapshotEntry(
+        int SlotIndex,
+        int? LeftOrdinal,
+        int? RightOrdinal,
+        int? Score,
+        bool IsAmbiguous,
+        bool IsManuallyMapped,
+        ColumnRole Role,
+        bool CaseSensitive,
+        bool IgnoreLeadingAndTrailingWhitespace);
 
     private void ClosePivotView()
     {
