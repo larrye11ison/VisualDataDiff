@@ -1,0 +1,13 @@
+LastName,ID,First_Name,SSN,PhoneNumber,Address,Address,City,State,Salary,Commission_Rate,Notes
+Blake,3,Owen,543-76-8803,(555) 402-3003,205 Cambridge Rd,205 Cambridge Rd,Toledo,OH,"$71,900.00",2.5%,On-site
+Chandler,4,Ivy,654-87-8804,(555) 402-3004,38 Dunmore Ave,38 Dunmore Ave,Reno,NV,"$67,300.00",3.0%,Hybrid
+Sutton,5,Caleb,765-98-8805,(555) 402-9005,411 Elmhurst Dr,411 Elmhurst Dr,Tulsa,OK,"$60,800.00",5.5%,Remote
+Wolfe,6,Ruby,876-09-8806,(555) 402-3006,17 Fernwood Ct,17 Fernwood Ct,Albany,NY,"$75,200.00",2.0%,On-site
+Pearce,7,Adrian,987-10-8807,(555) 402-3007,629 Glenridge Ave,629 Glenridge Ave,Mobile,AL,"$64,100.00",4.5%,Hybrid
+Kessler,8,Nora,198-21-8808,(555) 402-3008,45 Hawthorn Blvd,45 Hawthorn Blvd,Madison,WI,"$72,100.00",3.0%,Remote
+Barrett,9,Miles,209-32-8809,(555) 402-3009,783 Ivywood Dr,783 Ivywood Dr,Spokane,WA,"$58,900.00",6.0%,On-site
+Hensley,10,Piper,310-43-8810,(555) 402-3010,8 Juniper Ln,8 Juniper Ln,Fresno,CA,"$73,400.00",2.5%,Hybrid
+WHITFIELD,11,Gavin,421-54-8811,(555) 402-3011,260 Kingsley Dr,260 Kingsley Dr,Akron,OH,"$61,200.00",4.5%,Remote
+Sinclair,12,Willow,532-65-8812,(555) 402-3012,36 Lakeview Ct,36 Lakeview Ct,Wichita,KS,"$66,500.00",3.5%,On-site
+Truman,13,Dominic,643-76-8813,(555) 402-3013,815 Millbrook Ave,815 Millbrook Ave,Columbia,SC,"$74,900.00",5.5%,Hybrid
+Vance,14,Aria,754-87-8814,(555) 402-3014,22 Northgate Rd,22 Northgate Rd,Anchorage,AK,"$62,600.00",3.0%,Remote

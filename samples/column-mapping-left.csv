@@ -1,0 +1,13 @@
+ID,FirstName,LastName,SSN,Phone,Address,City,State,Salary,CommissionRate,Department
+1,Ryan,Palmer,321-54-8801,(555) 402-3001,14 Aspen Ct,Tacoma,WA,"$59,600.00",3.5%,Sales
+2,Hannah,Reyes,432-65-8802,(555) 402-3002,92 Birchgate Ln,Fresno,CA,"$63,400.00",4.0%,Sales
+3,Owen,Blake,543-76-8803,(555) 402-3003,205 Cambridge Rd,Toledo,OH,"$71,900.00",2.5%,Marketing
+4,Ivy,Chandler,654-87-8804,(555) 402-3004,38 Dunmore Ave,Reno,NV,"$67,300.00",3.0%,Marketing
+5,Caleb,Sutton,765-98-8805,(555) 402-3005,411 Elmhurst Dr,Tulsa,OK,"$60,800.00",5.5%,Finance
+6,Ruby,Wolfe,876-09-8806,(555) 402-3006,17 Fernwood Ct,Albany,NY,"$75,200.00",2.0%,Finance
+7,Adrian,Pearce,987-10-8807,(555) 402-3007,629 Glenridge Ave,Mobile,AL,"$64,100.00",4.5%,Engineering
+8,Nora,Kessler,198-21-8808,(555) 402-3008,45 Hawthorn Blvd,Madison,WI,"$70,750.00",3.0%,Engineering
+9,Miles,Barrett,209-32-8809,(555) 402-3009,783 Ivywood Dr,Spokane,WA,"$58,900.00",6.0%,Support
+10,Piper,Hensley,310-43-8810,(555) 402-3010,8 Juniper Ln,Fresno,CA,"$73,400.00",2.5%,Support
+11,Gavin,Whitfield,421-54-8811,(555) 402-3011,260 Kingsley Dr,Akron,OH,"$61,200.00",4.5%,Sales
+12,Willow,Sinclair,532-65-8812,(555) 402-3012,36 Lakeview Ct,Wichita,KS,"$66,500.00",3.5%,Marketing
