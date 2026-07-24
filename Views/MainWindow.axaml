@@ -27,6 +27,16 @@
             <Setter Property="BorderBrush" Value="#FFD9603C"/>
             <Setter Property="BorderThickness" Value="1"/>
         </Style>
+        <Style Selector="Border.matchAmbiguous">
+            <Setter Property="Background" Value="#4DE0A15B"/>
+            <Setter Property="BorderBrush" Value="#FFE0A15B"/>
+            <Setter Property="BorderThickness" Value="1"/>
+        </Style>
+        <Style Selector="Border.matchUnmapped">
+            <Setter Property="Background" Value="#33808080"/>
+            <Setter Property="BorderBrush" Value="#FF808080"/>
+            <Setter Property="BorderThickness" Value="1"/>
+        </Style>
         <Style Selector="Border.searchAllRow">
             <Setter Property="Background" Value="#FF3A3A3D"/>
         </Style>
@@ -273,35 +283,54 @@
                                Opacity="0.7" VerticalAlignment="Center"/>
                 </StackPanel>
 
-                <TextBlock Grid.Row="1"
-                           Text="Select at least one Key column before running the comparison."
-                           Foreground="#FFE0A15B"
-                           FontWeight="SemiBold"
-                           IsVisible="{Binding !HasKeyColumnSelected}"/>
+                <StackPanel Grid.Row="1" Spacing="4">
+                    <TextBlock Text="Select at least one Key column before running the comparison."
+                               Foreground="#FFE0A15B"
+                               FontWeight="SemiBold"
+                               IsVisible="{Binding !HasKeyColumnSelected}"/>
+                    <TextBlock Text="Two rows reference the same source column - fix the duplicate before continuing."
+                               Foreground="#FFD9603C"
+                               FontWeight="SemiBold"
+                               IsVisible="{Binding HasDuplicateColumnClaims}"/>
+                    <TextBlock Text="The Key column must be mapped on both sides."
+                               Foreground="#FFD9603C"
+                               FontWeight="SemiBold"
+                               IsVisible="{Binding HasUnmappedKeyColumn}"/>
+                    <StackPanel Orientation="Horizontal" Spacing="12">
+                        <TextBlock Text="{Binding MatchedColumnCount, StringFormat='{}{0} matched'}" Opacity="0.8"/>
+                        <TextBlock Text="{Binding NeedsReviewColumnCount, StringFormat='{}{0} need review'}" Foreground="#FFE0A15B"/>
+                        <TextBlock Text="{Binding UnmappedLeftColumnCount, StringFormat='{}{0} unmapped (Left only)'}" Opacity="0.8"/>
+                        <TextBlock Text="{Binding UnmappedRightColumnCount, StringFormat='{}{0} unmapped (Right only)'}" Opacity="0.8"/>
+                    </StackPanel>
+                </StackPanel>
 
-                <Grid Grid.Row="2" ColumnDefinitions="40,130,120,190,*,*" ColumnSpacing="12" Margin="0,0,16,2">
+                <Grid Grid.Row="2" ColumnDefinitions="40,130,120,190,*,*,140" ColumnSpacing="12" Margin="0,0,16,2">
                     <TextBlock Grid.Column="0" Text="#" FontWeight="Bold"/>
                     <TextBlock Grid.Column="1" Text="Type" FontWeight="Bold"/>
                     <TextBlock Grid.Column="2" Text="Case-sensitive" FontWeight="Bold"/>
                     <TextBlock Grid.Column="3" Text="Trim leading/trailing whitespace" FontWeight="Bold" TextWrapping="Wrap"/>
                     <TextBlock Grid.Column="4" Text="{Binding LeftSource.DataGroupHeader}" FontWeight="Bold"/>
                     <TextBlock Grid.Column="5" Text="{Binding RightSource.DataGroupHeader}" FontWeight="Bold"/>
+                    <TextBlock Grid.Column="6" Text="Match" FontWeight="Bold"/>
                 </Grid>
 
                 <ScrollViewer Grid.Row="3">
                     <ItemsControl ItemsSource="{Binding ColumnOptions}">
                         <ItemsControl.ItemTemplate>
                             <DataTemplate x:DataType="vm:ColumnOptionsViewModel">
-                                <Grid ColumnDefinitions="40,130,120,190,*,*" ColumnSpacing="12" Margin="0,0,0,4">
-                                    <TextBlock Grid.Column="0" Text="{Binding Ordinal}" VerticalAlignment="Center" Opacity="0.6"/>
+                                <Grid ColumnDefinitions="40,130,120,190,*,*,140" ColumnSpacing="12" Margin="0,0,0,4">
+                                    <TextBlock Grid.Column="0" Text="{Binding SlotIndex}" VerticalAlignment="Center" Opacity="0.6"/>
                                     <ComboBox Grid.Column="1" ItemsSource="{Binding AvailableRoles}" SelectedItem="{Binding Role}"/>
                                     <CheckBox Grid.Column="2" IsChecked="{Binding CaseSensitive}" HorizontalAlignment="Center" VerticalAlignment="Center"/>
                                     <CheckBox Grid.Column="3" IsChecked="{Binding IgnoreLeadingAndTrailingWhitespace}" HorizontalAlignment="Center" VerticalAlignment="Center"/>
-                                    <Border Grid.Column="4" Padding="4,2" CornerRadius="3" Classes.nameMismatch="{Binding HasNameMismatch}">
-                                        <TextBlock Text="{Binding LeftDisplayName}" TextTrimming="CharacterEllipsis"/>
+                                    <Border Grid.Column="4" Padding="2" CornerRadius="3" Classes.nameMismatch="{Binding HasNameMismatch}">
+                                        <ComboBox ItemsSource="{Binding LeftOptions}" SelectedItem="{Binding SelectedLeftOption}" HorizontalAlignment="Stretch"/>
                                     </Border>
-                                    <Border Grid.Column="5" Padding="4,2" CornerRadius="3" Classes.nameMismatch="{Binding HasNameMismatch}">
-                                        <TextBlock Text="{Binding RightDisplayName}" TextTrimming="CharacterEllipsis"/>
+                                    <Border Grid.Column="5" Padding="2" CornerRadius="3" Classes.nameMismatch="{Binding HasNameMismatch}">
+                                        <ComboBox ItemsSource="{Binding RightOptions}" SelectedItem="{Binding SelectedRightOption}" HorizontalAlignment="Stretch"/>
+                                    </Border>
+                                    <Border Grid.Column="6" Padding="4,2" CornerRadius="3" Classes.matchAmbiguous="{Binding IsAmbiguous}" Classes.matchUnmapped="{Binding IsUnmapped}">
+                                        <TextBlock Text="{Binding MatchStatusLabel}" TextTrimming="CharacterEllipsis"/>
                                     </Border>
                                 </Grid>
                             </DataTemplate>

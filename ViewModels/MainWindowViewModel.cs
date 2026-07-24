@@ -16,6 +16,7 @@ public partial class MainWindowViewModel : ViewModelBase
     private readonly IDataDiffEngine _diffEngine;
     private readonly IFilePickerService _filePickerService;
     private readonly ISearchEngine _searchEngine;
+    private readonly IColumnMatcher _columnMatcher;
     private CancellationTokenSource? _operationCts;
     private TabularDataSet? _leftDataSet;
     private TabularDataSet? _rightDataSet;
@@ -38,12 +39,14 @@ public partial class MainWindowViewModel : ViewModelBase
         ITabularDataSourceFactory sourceFactory,
         IDataDiffEngine diffEngine,
         IFilePickerService filePickerService,
-        ISearchEngine searchEngine)
+        ISearchEngine searchEngine,
+        IColumnMatcher columnMatcher)
     {
         _sourceFactory = sourceFactory;
         _diffEngine = diffEngine;
         _filePickerService = filePickerService;
         _searchEngine = searchEngine;
+        _columnMatcher = columnMatcher;
 
         LeftSource = new SourcePaneViewModel("Left");
         RightSource = new SourcePaneViewModel("Right");
@@ -78,7 +81,7 @@ public partial class MainWindowViewModel : ViewModelBase
         PivotNextRowCommand = new RelayCommand(() => NavigatePivotRow(1), () => CanNavigatePivotRow(1));
         OpenSearchCommand = new RelayCommand(OpenSearch);
         OpenColumnSettingsCommand = new RelayCommand(OpenColumnSettings);
-        ColumnSettingsOkCommand = new AsyncRelayCommand(ColumnSettingsOkAsync, () => !IsBusy);
+        ColumnSettingsOkCommand = new AsyncRelayCommand(ColumnSettingsOkAsync, () => !IsBusy && !HasColumnMappingConflicts);
         ColumnSettingsCancelCommand = new RelayCommand(CancelColumnSettings);
         DiscardColumnSettingsChangesCommand = new RelayCommand(DiscardColumnSettingsChanges);
         KeepEditingColumnSettingsCommand = new RelayCommand(KeepEditingColumnSettings);
@@ -233,6 +236,28 @@ public partial class MainWindowViewModel : ViewModelBase
     private bool IsDelimitedTextConfigValid => TryBuildEffectiveDelimitedTextSettings(out _, out _, out _);
 
     public bool HasKeyColumnSelected => ColumnOptions.Any(x => x.Role == ColumnRole.Key);
+
+    public int MatchedColumnCount => ColumnOptions.Count(x => !x.IsUnmapped && !x.IsAmbiguous);
+
+    public int NeedsReviewColumnCount => ColumnOptions.Count(x => !x.IsUnmapped && x.IsAmbiguous);
+
+    public int UnmappedLeftColumnCount => ColumnOptions.Count(x => x.IsUnmapped && x.LeftOrdinal is not null);
+
+    public int UnmappedRightColumnCount => ColumnOptions.Count(x => x.IsUnmapped && x.RightOrdinal is not null);
+
+    // Two rows pointing at the same source column is only possible now that mapping is user-editable
+    // (Phase 3) - the auto-matcher itself never produces this. Checked at OK time rather than
+    // prevented live in the pickers, to avoid cross-row-aware live filtering.
+    public bool HasDuplicateColumnClaims =>
+        ColumnOptions.Where(x => x.LeftOrdinal is not null).GroupBy(x => x.LeftOrdinal).Any(g => g.Count() > 1)
+        || ColumnOptions.Where(x => x.RightOrdinal is not null).GroupBy(x => x.RightOrdinal).Any(g => g.Count() > 1);
+
+    // A Key column has to exist on both sides to be usable for row-matching at all (see
+    // DataDiffEngine.CompareCore, which silently drops one-sided Key rules from the key set) - block
+    // OK rather than let the user discover this only after the comparison quietly ignores their key.
+    public bool HasUnmappedKeyColumn => ColumnOptions.Any(x => x.Role == ColumnRole.Key && x.IsUnmapped);
+
+    public bool HasColumnMappingConflicts => HasDuplicateColumnClaims || HasUnmappedKeyColumn;
 
     public string PivotSubtitle => _pivotedSourceRow switch
     {
@@ -627,15 +652,20 @@ public partial class MainWindowViewModel : ViewModelBase
 
     private IReadOnlyList<ColumnComparisonRule> BuildRules()
     {
+        // Preserve ColumnOptions' own order rather than re-sorting by LeftOrdinal - RebuildColumnOptions
+        // already produces the desired final order, and a rule's position in this list becomes the
+        // resulting DiffColumn/DiffCell "slot" ordinal, which several lookups elsewhere key off of
+        // ColumnOptionsViewModel.SlotIndex. Re-sorting here (especially by a nullable LeftOrdinal,
+        // where default ordering puts null first) would desync the two.
         return ColumnOptions
             .Select(x => new ColumnComparisonRule
             {
-                Ordinal = x.Ordinal,
+                LeftOrdinal = x.LeftOrdinal,
+                RightOrdinal = x.RightOrdinal,
                 Role = x.Role,
                 CaseSensitive = x.CaseSensitive,
                 IgnoreLeadingAndTrailingWhitespace = x.IgnoreLeadingAndTrailingWhitespace
             })
-            .OrderBy(x => x.Ordinal)
             .ToArray();
     }
 
@@ -669,7 +699,21 @@ public partial class MainWindowViewModel : ViewModelBase
 
     private void RebuildColumnOptions(TabularDataSet leftDataSet, TabularDataSet rightDataSet)
     {
-        var existing = ColumnOptions.ToDictionary(x => x.Ordinal);
+        // Carry forward the user's prior Role/CaseSensitive/Whitespace choices by normalized column
+        // name rather than by position - names are the stable identity a user actually thinks in
+        // terms of ("the FirstName column"), and survive a reload even if columns get reordered or
+        // the auto-match assigns different slot indexes than last time. Duplicate names just take the
+        // first prior match found; this is a best-effort carry-forward, not a strict guarantee.
+        var existingByName = new Dictionary<string, ColumnOptionsViewModel>(StringComparer.OrdinalIgnoreCase);
+        foreach (var existing in ColumnOptions)
+        {
+            var key = HeaderNameComparer.Normalize(existing.LeftName ?? existing.RightName ?? string.Empty);
+            if (!string.IsNullOrEmpty(key) && !existingByName.ContainsKey(key))
+            {
+                existingByName[key] = existing;
+            }
+        }
+
         foreach (var column in ColumnOptions)
         {
             column.PropertyChanged -= OnColumnOptionsPropertyChanged;
@@ -677,29 +721,65 @@ public partial class MainWindowViewModel : ViewModelBase
 
         ColumnOptions.Clear();
 
-        var maxColumns = Math.Max(leftDataSet.Columns.Count, rightDataSet.Columns.Count);
-        for (var i = 0; i < maxColumns; i++)
-        {
-            var leftName = i < leftDataSet.Columns.Count ? leftDataSet.Columns[i].Name : null;
-            var rightName = i < rightDataSet.Columns.Count ? rightDataSet.Columns[i].Name : null;
+        var matches = _columnMatcher.Match(leftDataSet.Columns, rightDataSet.Columns);
 
-            var vm = new ColumnOptionsViewModel(i, leftName, rightName);
-            if (existing.TryGetValue(i, out var previous))
+        // Present in the left file's natural column order (both mapped and left-only columns sort by
+        // LeftOrdinal), with right-only columns - which have no position in the left file at all -
+        // appended at the end in the right file's order.
+        var orderedMatches = matches
+            .OrderBy(m => m.LeftOrdinal ?? int.MaxValue)
+            .ThenBy(m => m.RightOrdinal ?? int.MaxValue)
+            .ToArray();
+
+        for (var slot = 0; slot < orderedMatches.Length; slot++)
+        {
+            var match = orderedMatches[slot];
+            var leftName = match.LeftOrdinal is int lo ? leftDataSet.Columns[lo].Name : null;
+            var rightName = match.RightOrdinal is int ro ? rightDataSet.Columns[ro].Name : null;
+
+            var vm = new ColumnOptionsViewModel(slot, leftDataSet.Columns, rightDataSet.Columns, match.LeftOrdinal, match.RightOrdinal, match.Score, match.IsAmbiguous);
+
+            var lookupName = HeaderNameComparer.Normalize(leftName ?? rightName ?? string.Empty);
+            if (!string.IsNullOrEmpty(lookupName) && existingByName.TryGetValue(lookupName, out var previous))
             {
                 vm.Role = previous.Role;
                 vm.CaseSensitive = previous.CaseSensitive;
                 vm.IgnoreLeadingAndTrailingWhitespace = previous.IgnoreLeadingAndTrailingWhitespace;
             }
-            else if (i == 0)
+            else if (vm.IsUnmapped)
             {
-                vm.Role = ColumnRole.Key;
+                // No real counterpart to compare against - comparing would just always show
+                // "different" on every row, which is noise, not signal.
+                vm.Role = ColumnRole.Ignored;
             }
 
             vm.PropertyChanged += OnColumnOptionsPropertyChanged;
             ColumnOptions.Add(vm);
         }
 
+        if (!ColumnOptions.Any(x => x.Role == ColumnRole.Key))
+        {
+            var firstMapped = ColumnOptions.FirstOrDefault(x => !x.IsUnmapped);
+            if (firstMapped is not null)
+            {
+                firstMapped.Role = ColumnRole.Key;
+            }
+        }
+
         OnPropertyChanged(nameof(HasKeyColumnSelected));
+        NotifyColumnMatchSummaryChanged();
+    }
+
+    private void NotifyColumnMatchSummaryChanged()
+    {
+        OnPropertyChanged(nameof(MatchedColumnCount));
+        OnPropertyChanged(nameof(NeedsReviewColumnCount));
+        OnPropertyChanged(nameof(UnmappedLeftColumnCount));
+        OnPropertyChanged(nameof(UnmappedRightColumnCount));
+        OnPropertyChanged(nameof(HasDuplicateColumnClaims));
+        OnPropertyChanged(nameof(HasUnmappedKeyColumn));
+        OnPropertyChanged(nameof(HasColumnMappingConflicts));
+        ColumnSettingsOkCommand.NotifyCanExecuteChanged();
     }
 
     private void OnColumnOptionsPropertyChanged(object? sender, PropertyChangedEventArgs e)
@@ -714,7 +794,12 @@ public partial class MainWindowViewModel : ViewModelBase
             OnPropertyChanged(nameof(HasKeyColumnSelected));
         }
 
-        if (e.PropertyName is nameof(ColumnOptionsViewModel.CaseSensitive) or nameof(ColumnOptionsViewModel.IgnoreLeadingAndTrailingWhitespace) or nameof(ColumnOptionsViewModel.Role))
+        if (e.PropertyName is nameof(ColumnOptionsViewModel.LeftOrdinal) or nameof(ColumnOptionsViewModel.RightOrdinal) or nameof(ColumnOptionsViewModel.Role))
+        {
+            NotifyColumnMatchSummaryChanged();
+        }
+
+        if (e.PropertyName is nameof(ColumnOptionsViewModel.CaseSensitive) or nameof(ColumnOptionsViewModel.IgnoreLeadingAndTrailingWhitespace) or nameof(ColumnOptionsViewModel.Role) or nameof(ColumnOptionsViewModel.LeftOrdinal) or nameof(ColumnOptionsViewModel.RightOrdinal))
         {
             StatusText = "Column options changed. Run comparison to refresh results.";
             // Disabled along with the main-screen "Column Options" editor.
@@ -735,7 +820,7 @@ public partial class MainWindowViewModel : ViewModelBase
             return;
         }
 
-        var optionsByOrdinal = ColumnOptions.ToDictionary(x => x.Ordinal);
+        var optionsByOrdinal = ColumnOptions.ToDictionary(x => x.SlotIndex);
         var columnsWithNonOrphanDifferences = _diffResult.Rows
             .Where(row => !row.IsLeftOrphan && !row.IsRightOrphan)
             .SelectMany(row => row.Cells.Where(cell => cell.IsDifferent).Select(cell => cell.Ordinal))
@@ -898,7 +983,9 @@ public partial class MainWindowViewModel : ViewModelBase
         }
 
         _columnSettingsSnapshot = ColumnOptions
-            .Select(x => new ColumnSettingsSnapshotEntry(x.Ordinal, x.Role, x.CaseSensitive, x.IgnoreLeadingAndTrailingWhitespace))
+            .Select(x => new ColumnSettingsSnapshotEntry(
+                x.SlotIndex, x.LeftOrdinal, x.RightOrdinal, x.Score, x.IsAmbiguous, x.IsManuallyMapped,
+                x.Role, x.CaseSensitive, x.IgnoreLeadingAndTrailingWhitespace))
             .ToArray();
         IsConfirmingDiscardColumnSettings = false;
         IsColumnSettingsOpen = true;
@@ -963,8 +1050,10 @@ public partial class MainWindowViewModel : ViewModelBase
 
         foreach (var entry in _columnSettingsSnapshot)
         {
-            var current = ColumnOptions.FirstOrDefault(x => x.Ordinal == entry.Ordinal);
+            var current = ColumnOptions.FirstOrDefault(x => x.SlotIndex == entry.SlotIndex);
             if (current is null
+                || current.LeftOrdinal != entry.LeftOrdinal
+                || current.RightOrdinal != entry.RightOrdinal
                 || current.Role != entry.Role
                 || current.CaseSensitive != entry.CaseSensitive
                 || current.IgnoreLeadingAndTrailingWhitespace != entry.IgnoreLeadingAndTrailingWhitespace)
@@ -985,19 +1074,29 @@ public partial class MainWindowViewModel : ViewModelBase
 
         foreach (var entry in _columnSettingsSnapshot)
         {
-            var current = ColumnOptions.FirstOrDefault(x => x.Ordinal == entry.Ordinal);
+            var current = ColumnOptions.FirstOrDefault(x => x.SlotIndex == entry.SlotIndex);
             if (current is null)
             {
                 continue;
             }
 
+            current.RestoreMapping(entry.LeftOrdinal, entry.RightOrdinal, entry.Score, entry.IsAmbiguous, entry.IsManuallyMapped);
             current.Role = entry.Role;
             current.CaseSensitive = entry.CaseSensitive;
             current.IgnoreLeadingAndTrailingWhitespace = entry.IgnoreLeadingAndTrailingWhitespace;
         }
     }
 
-    private readonly record struct ColumnSettingsSnapshotEntry(int Ordinal, ColumnRole Role, bool CaseSensitive, bool IgnoreLeadingAndTrailingWhitespace);
+    private readonly record struct ColumnSettingsSnapshotEntry(
+        int SlotIndex,
+        int? LeftOrdinal,
+        int? RightOrdinal,
+        int? Score,
+        bool IsAmbiguous,
+        bool IsManuallyMapped,
+        ColumnRole Role,
+        bool CaseSensitive,
+        bool IgnoreLeadingAndTrailingWhitespace);
 
     private void ClosePivotView()
     {
@@ -1121,7 +1220,7 @@ public partial class MainWindowViewModel : ViewModelBase
             return;
         }
 
-        var optionsByOrdinal = ColumnOptions.ToDictionary(x => x.Ordinal);
+        var optionsByOrdinal = ColumnOptions.ToDictionary(x => x.SlotIndex);
         var row = _pivotedSourceRow.Row;
         SearchRowMatch? rowMatch = null;
         _searchResult?.RowMatches.TryGetValue(row, out rowMatch);

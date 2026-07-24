@@ -2,7 +2,9 @@ namespace VisualDataDiff.Models;
 
 public sealed class ColumnComparisonRule
 {
-	public int Ordinal { get; set; }
+	public int? LeftOrdinal { get; set; }
+
+	public int? RightOrdinal { get; set; }
 
 	public ColumnRole Role { get; set; } = ColumnRole.Normal;
 
